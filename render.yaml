@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: voice-bot-only
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node voice-bot-only.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TOKEN
+        value: replace_with_your_discord_token
+      - key: VOICE_CHANNEL_ID
+        value: replace_with_voice_channel_id
+      - key: KEEPALIVE_MS
+        value: 15000
