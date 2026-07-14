@@ -18,6 +18,21 @@ function createSilentStream() {
   });
 }
 
+function parseJSONBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => data += chunk);
+    req.on('end', () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 const rawTokens = process.env.BOT_TOKENS || process.env.BOT_TOKEN || '';
 const tokens = parseList(rawTokens);
 const autoJoin = (process.env.AUTO_JOIN || 'false').toLowerCase() === 'true';
@@ -36,66 +51,110 @@ const bots = tokens.slice(0, 20).map((token, index) => {
   let voiceConnection = null;
   let audioPlayer = null;
 
-  async function joinChannel(targetChannelId) {
-    try {
-      const channel = await client.channels.fetch(targetChannelId);
-      if (!channel || !channel.isVoice?.()) {
-        console.error(`❌ [Bot ${index + 1}] Channel ${targetChannelId} was not found or is not a voice channel`);
+  const bot = {
+    client,
+    token,
+    channelId: null,
+    guildId: null,
+    status: 'offline',
+    async joinChannel(targetChannelId, targetGuildId) {
+      if (!targetChannelId) return;
+      if (voiceConnection && bot.channelId === targetChannelId) {
+        console.log(`ℹ️ [Bot ${index + 1}] Already in channel ${targetChannelId}`);
         return;
       }
 
-      const guild = channel.guild || await client.guilds.fetch(channel.guildId || channel.guild?.id);
-      if (!guild) {
-        console.error(`❌ [Bot ${index + 1}] Could not resolve guild for ${channel.id}`);
-        return;
+      if (voiceConnection) {
+        try {
+          voiceConnection.destroy();
+          audioPlayer?.stop();
+        } catch (e) {}
       }
 
-      console.log(`✅ [Bot ${index + 1}] Joining voice channel ${channel.name} (${channel.id})`);
-
-      voiceConnection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: guild.id,
-        adapterCreator: guild.voiceAdapterCreator,
-        selfDeaf: false,
-        selfMute: true,
-      });
-
-      audioPlayer = createAudioPlayer({
-        behaviors: { noSubscriber: NoSubscriberBehavior.Play }
-      });
-      const silentStream = createSilentStream();
-      const resource = createAudioResource(silentStream, {
-        inputType: StreamType.Raw,
-        inlineVolume: true,
-      });
-      resource.volume.setVolume(0.0);
-
-      audioPlayer.play(resource);
-      voiceConnection.subscribe(audioPlayer);
-
-      voiceConnection.on('stateChange', (oldState, newState) => {
-        console.log(`🔌 [Bot ${index + 1}] Voice state: ${oldState.status} -> ${newState.status}`);
-        if (newState.status === 'disconnected' || newState.status === 'destroyed') {
-          console.error(`❌ [Bot ${index + 1}] Voice disconnected, attempting reconnect...`);
-          setTimeout(() => joinChannel(targetChannelId), 5000);
+      try {
+        const channel = await client.channels.fetch(targetChannelId);
+        if (!channel || !channel.isVoice?.()) {
+          console.error(`❌ [Bot ${index + 1}] Channel ${targetChannelId} was not found or is not a voice channel`);
+          return;
         }
-      });
 
-      audioPlayer.on('error', error => {
-        console.error(`❌ [Bot ${index + 1}] Audio player error:`, error.message);
-      });
-
-      setInterval(() => {
-        if (voiceConnection && voiceConnection.state.status === 'ready') {
-          console.log(`💚 [Bot ${index + 1}] Voice channel still active`);
+        const guild = targetGuildId
+          ? client.guilds.cache.get(targetGuildId) || await client.guilds.fetch(targetGuildId)
+          : channel.guild || await client.guilds.fetch(channel.guildId || channel.guild?.id);
+        if (!guild) {
+          console.error(`❌ [Bot ${index + 1}] Could not resolve guild for ${channel.id}`);
+          return;
         }
-      }, keepAliveMs);
-    } catch (error) {
-      console.error(`❌ [Bot ${index + 1}] Auto-join failed: ${error.message}`);
+
+        console.log(`✅ [Bot ${index + 1}] Joining voice channel ${channel.name} (${channel.id})`);
+
+        voiceConnection = joinVoiceChannel({
+          channelId: channel.id,
+          guildId: guild.id,
+          adapterCreator: guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: true,
+        });
+
+        audioPlayer = createAudioPlayer({
+          behaviors: { noSubscriber: NoSubscriberBehavior.Play }
+        });
+        const silentStream = createSilentStream();
+        const resource = createAudioResource(silentStream, {
+          inputType: StreamType.Raw,
+          inlineVolume: true,
+        });
+        resource.volume.setVolume(0.0);
+
+        audioPlayer.play(resource);
+        voiceConnection.subscribe(audioPlayer);
+
+        bot.channelId = channel.id;
+        bot.guildId = guild.id;
+
+        voiceConnection.on('stateChange', (oldState, newState) => {
+          console.log(`🔌 [Bot ${index + 1}] Voice state: ${oldState.status} -> ${newState.status}`);
+          if (newState.status === 'disconnected' || newState.status === 'destroyed') {
+            console.error(`❌ [Bot ${index + 1}] Voice disconnected, attempting reconnect...`);
+            setTimeout(() => bot.joinChannel(targetChannelId, targetGuildId), 5000);
+          }
+        });
+
+        audioPlayer.on('error', error => {
+          console.error(`❌ [Bot ${index + 1}] Audio player error:`, error.message);
+        });
+
+        setInterval(() => {
+          if (voiceConnection && voiceConnection.state.status === 'ready') {
+            console.log(`💚 [Bot ${index + 1}] Voice channel still active`);
+          }
+        }, keepAliveMs);
+      } catch (error) {
+        console.error(`❌ [Bot ${index + 1}] Join failed: ${error.message}`);
+      }
+    },
+    leaveChannel() {
+      if (voiceConnection) {
+        console.log(`🟡 [Bot ${index + 1}] Leaving voice channel ${bot.channelId}`);
+        voiceConnection.destroy();
+        audioPlayer?.stop();
+        voiceConnection = null;
+        audioPlayer = null;
+        bot.channelId = null;
+        bot.guildId = null;
+      }
+    },
+    shutdown() {
+      try {
+        if (voiceConnection) voiceConnection.destroy();
+        if (audioPlayer) audioPlayer.stop();
+        client.destroy();
+      } catch (e) {}
     }
-  }
+  };
 
   client.on('ready', async () => {
+    bot.status = 'ready';
     console.log(`✅ [Bot ${index + 1}] ${client.user.tag} is ready`);
 
     if (!autoJoin) {
@@ -109,20 +168,14 @@ const bots = tokens.slice(0, 20).map((token, index) => {
       return;
     }
 
-    await joinChannel(targetChannelId);
+    await bot.joinChannel(targetChannelId);
   });
 
   client.on('error', (error) => {
     console.error(`❌ [Bot ${index + 1}] Client error:`, error);
   });
 
-  return { client, token, shutdown: () => {
-    try {
-      if (voiceConnection) voiceConnection.destroy();
-      if (audioPlayer) audioPlayer.stop();
-      client.destroy();
-    } catch (e) {}
-  } };
+  return bot;
 });
 
 process.on('unhandledRejection', (error) => {
@@ -148,14 +201,62 @@ bots.forEach((bot, index) => {
 console.log(`🚀 Starting ${bots.length} voice bot(s) from BOT_TOKENS/BOT_TOKEN`);
 console.log(`🧠 Health endpoint enabled on port ${port}`);
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
+const server = http.createServer(async (req, res) => {
+  if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', bots: bots.length }));
-  } else {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('voice-bot-running');
+    return;
   }
+
+  if (req.url === '/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      bots: bots.map((bot, index) => ({
+        index: index + 1,
+        ready: bot.status === 'ready',
+        channelId: bot.channelId,
+        guildId: bot.guildId,
+      }))
+    }));
+    return;
+  }
+
+  if (req.url === '/join' && req.method === 'POST') {
+    try {
+      const body = await parseJSONBody(req);
+      const targetChannelId = body.channelId || body.channel || null;
+      const targetGuildId = body.guildId || body.guild || null;
+      if (!targetChannelId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'channelId is required' }));
+        return;
+      }
+
+      for (const bot of bots) {
+        bot.joinChannel(targetChannelId, targetGuildId);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'joining', channelId: targetChannelId, guildId: targetGuildId }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  if (req.url === '/leave' && req.method === 'POST') {
+    for (const bot of bots) {
+      bot.leaveChannel();
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'left' }));
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not found' }));
 });
 
 server.listen(port, () => {
