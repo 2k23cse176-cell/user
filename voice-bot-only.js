@@ -1,4 +1,5 @@
 const { Client } = require('discord.js-selfbot-v13');
+const http = require('http');
 
 function parseList(value) {
   return (value || '')
@@ -12,6 +13,7 @@ const tokens = parseList(rawTokens);
 const autoJoin = (process.env.AUTO_JOIN || 'false').toLowerCase() === 'true';
 const rawChannels = process.env.VOICE_CHANNEL_IDS || process.env.VOICE_CHANNEL_ID || process.env.CHANNEL_ID || '';
 const channelIds = parseList(rawChannels);
+const port = Number(process.env.PORT || 3000);
 
 if (tokens.length === 0) {
   console.error('❌ Missing BOT_TOKEN or BOT_TOKENS');
@@ -71,7 +73,22 @@ bots.forEach((bot, index) => {
 });
 
 console.log(`🚀 Starting ${bots.length} voice bot(s) from BOT_TOKENS/BOT_TOKEN`);
-console.log('🧠 Worker mode: keeping bot sessions alive without exposing an HTTP port');
+console.log(`🧠 Health endpoint enabled on port ${port}`);
+
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', bots: bots.length }));
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('voice-bot-running');
+  }
+});
+
+server.listen(port, () => {
+  console.log(`🌐 Health server listening on port ${port}`);
+});
+
 setInterval(() => {
   process.stdout.write('.');
 }, 60000);
