@@ -202,6 +202,98 @@ console.log(`🚀 Starting ${bots.length} voice bot(s) from BOT_TOKENS/BOT_TOKEN
 console.log(`🧠 Health endpoint enabled on port ${port}`);
 
 const server = http.createServer(async (req, res) => {
+  if (req.url === '/' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Render Bot Monitor</title>
+  <style>
+    body { background:#0b1220; color:#e5e7eb; font-family:system-ui, sans-serif; margin:0; padding:24px; }
+    h1 { margin:0 0 8px; font-size:clamp(2rem, 3vw, 2.75rem); }
+    p { margin:4px 0 16px; color:#9ca3af; }
+    button { cursor:pointer; border:none; padding:14px 18px; border-radius:14px; font-weight:700; letter-spacing:.02em; }
+    .row { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
+    .card { background:rgba(17,24,39,.95); border:1px solid rgba(148,163,184,.15); border-radius:18px; padding:18px; min-width:280px; flex:1; }
+    .bot { background:#111827; border:1px solid rgba(148,163,184,.12); border-radius:16px; padding:14px; margin-bottom:12px; }
+    .bot span { display:inline-block; min-width:80px; color:#94a3b8; }
+    .status-ready { color:#22c55e; }
+    .status-offline { color:#f97316; }
+    .status-vc { color:#38bdf8; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; }
+    .actions button { flex:1 1 160px; }
+    a { color:#38bdf8; }
+  </style>
+</head>
+<body>
+  <h1>Render Bot Monitor</h1>
+  <p>This page monitors the hosted voice bots on Render. Use the buttons to keep them in VC or make them leave.</p>
+  <div class="actions">
+    <button id="stay" style="background:#22c55e;color:#0f172a;">Stay in VC</button>
+    <button id="leave" style="background:#ef4444;color:#fff;">Leave VC</button>
+    <button id="refresh" style="background:#2563eb;color:#fff;">Refresh Status</button>
+  </div>
+  <div id="message" style="margin:18px 0 0;color:#cbd5e1;"></div>
+  <div id="bots"></div>
+  <script>
+    const statusEl = document.getElementById('message');
+    const botsEl = document.getElementById('bots');
+
+    const renderStatus = (data) => {
+      if (!data || !data.bots) {
+        statusEl.textContent = 'Unable to load bot status.';
+        return;
+      }
+      const count = data.bots.length;
+      statusEl.textContent = 'Loaded ' + count + ' bot' + (count !== 1 ? 's' : '') + '.';
+      botsEl.innerHTML = data.bots.map(function(bot) {
+        return '<div class="bot">'
+          + '<div><strong>Bot ' + bot.index + '</strong></div>'
+          + '<div><span>Status:</span><span class="' + (bot.ready ? 'status-ready' : 'status-offline') + '">' + (bot.ready ? 'Ready' : 'Offline') + '</span></div>'
+          + '<div><span>Channel:</span><span>' + (bot.channelId || 'None') + '</span></div>'
+          + '<div><span>Guild:</span><span>' + (bot.guildId || 'None') + '</span></div>'
+          + '</div>';
+      }).join('');
+    };
+
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/status');
+        const data = await res.json();
+        renderStatus(data);
+      } catch (e) {
+        statusEl.textContent = 'Failed to load status';
+        botsEl.innerHTML = '';
+      }
+    };
+
+    document.getElementById('stay').addEventListener('click', async () => {
+      statusEl.textContent = 'Keeping bots in VC...';
+      const res = await fetch('/stay', { method: 'POST' });
+      const data = await res.json();
+      statusEl.textContent = data.status || 'Stay in VC requested';
+      fetchStatus();
+    });
+
+    document.getElementById('leave').addEventListener('click', async () => {
+      statusEl.textContent = 'Leaving VC...';
+      const res = await fetch('/leave', { method: 'POST' });
+      const data = await res.json();
+      statusEl.textContent = data.status || 'Leave requested';
+      fetchStatus();
+    });
+
+    document.getElementById('refresh').addEventListener('click', fetchStatus);
+    fetchStatus();
+    setInterval(fetchStatus, 10000);
+  </script>
+</body>
+</html>`);
+    return;
+  }
+
   if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', bots: bots.length }));
@@ -218,6 +310,17 @@ const server = http.createServer(async (req, res) => {
         guildId: bot.guildId,
       }))
     }));
+    return;
+  }
+
+  if (req.url === '/stay' && req.method === 'POST') {
+    for (const bot of bots) {
+      if (bot.channelId && bot.guildId) {
+        bot.joinChannel(bot.channelId, bot.guildId);
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'staying in vc' }));
     return;
   }
 
