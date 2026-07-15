@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Gain Control</title>
+  <style>
+    body {
+      width: 350px;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #fff;
+      margin: 0;
+      border-radius: 12px;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 20px;
+      font-weight: 700;
+      text-align: center;
+      color: #fff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .control-group {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 12px;
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .control-value {
+      background: rgba(255, 255, 255, 0.2);
+      padding: 4px 8px;
+      border-radius: 4px;
+      min-width: 50px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.3);
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      transition: all 0.2s ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      transition: all 0.2s ease;
+    }
+    input[type="range"]::-moz-range-thumb:hover {
+      transform: scale(1.2);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+    }
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    button {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+    }
+    .btn-apply {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: #fff;
+    }
+    .btn-apply:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+    }
+    .btn-apply:active {
+      transform: translateY(0);
+    }
+    .btn-reset {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+    }
+    .btn-reset:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    .status {
+      padding: 10px;
+      border-radius: 6px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(0, 0, 0, 0.2);
+      border-left: 3px solid rgba(255, 255, 255, 0.5);
+    }
+    .status.success {
+      border-left-color: #4ade80;
+      background: rgba(74, 222, 128, 0.15);
+    }
+    .status.error {
+      border-left-color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+    }
+    .preset-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .preset-btn {
+      padding: 6px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .preset-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+    .server-status {
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff6b6b;
+      animation: pulse 2s infinite;
+    }
+    .status-dot.connected {
+      background: #51cf66;
+      animation: none;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎚️ Audio Gain</h1>
+    
+    <div class="control-group">
+      <div class="control-label">
+        <span>Master Gain</span>
+        <span class="control-value" id="gainDisplay">2500.0x</span>
+      </div>
+      <input type="range" id="gainSlider" min="0" max="10000" step="1" value="2500">
+      <div class="preset-group">
+        <button class="preset-btn" onclick="setGain(500)">500x</button>
+        <button class="preset-btn" onclick="setGain(1000)">1000x</button>
+        <button class="preset-btn" onclick="setGain(2500)">2500x</button>
+        <button class="preset-btn" onclick="setGain(5000)">5000x</button>
+      </div>
+    </div>
+
+    <div class="server-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Checking server...</span>
+    </div>
+
+    <div class="button-group">
+      <button class="btn-apply" onclick="applyGain()">Apply Gain</button>
+      <button class="btn-reset" onclick="resetGain()">Reset</button>
+    </div>
+
+    <div id="statusMessage" class="status" style="display: none;"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

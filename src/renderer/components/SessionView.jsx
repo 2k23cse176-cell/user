@@ -221,7 +221,6 @@ export default function SessionView({ profile, inviteLink, setInviteLink, onClos
           ref={webviewRef}
           src="https://discord.com/app"
           partition={`persist:${profile.id}`}
-          data-profile-id={profile.id}
           useragent={`Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`}
           className={isGrid ? "w-full h-full transform origin-top-left scale-[0.75]" : "w-full h-full"}
           style={isGrid ? { width: '133.33%', height: '133.33%', backgroundColor: '#1e1f22' } : { backgroundColor: '#1e1f22' }}

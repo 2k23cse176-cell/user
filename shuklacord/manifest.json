@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "SHUKLACORD💜",
+  "version": "2.0.0",
+  "description": "SHUKLACORD💜 — dm agrim for custom hooks.",
+  "permissions": ["activeTab", "scripting", "storage", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Audio Gain Control"
+  },
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://ptb.discord.com/*",
+    "https://canary.discord.com/*",
+    "<all_urls>"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injector.js", "popup.html", "popup.js", "assets/*.gif", "icons/icon16.png", "icons/icon48.png", "icons/icon128.png"],
+      "matches": [
+        "https://discord.com/*",
+        "https://ptb.discord.com/*",
+        "https://canary.discord.com/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

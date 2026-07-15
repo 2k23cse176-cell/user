@@ -1,0 +1,11 @@
+node_modules
+src/main
+src/renderer
+dist
+*.exe
+*.dmg
+*.AppImage
+electron-builder.json
+scratch
+public
+.git

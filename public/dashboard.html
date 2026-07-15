@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Bot Control Tower</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1e1f22; color: #e0e0e0; min-height: 100vh; }
+    .header { background: #111214; padding: 16px 30px; border-bottom: 2px solid #2b2d31; display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { color: #e94560; font-size: 22px; letter-spacing: -0.5px; }
+    .header p { color: #6d6f78; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .badge { background: #2b2d31; padding: 8px 16px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+    .badge span { color: #23a55a; }
+    .container { max-width: 1400px; margin: 20px auto; padding: 0 20px; display: grid; grid-template-columns: 1fr 350px; gap: 20px; }
+    .main-col { display: flex; flex-direction: column; gap: 20px; }
+    .side-col { display: flex; flex-direction: column; gap: 20px; }
+    .card { background: #111214; border-radius: 16px; padding: 24px; border: 1px solid #2b2d31; }
+    .card h2 { font-size: 14px; color: #6d6f78; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .card h2 .icon { width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-item { background: #1e1f22; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #2b2d31; }
+    .stat-item .num { font-size: 28px; font-weight: 900; color: white; }
+    .stat-item .label { font-size: 10px; color: #6d6f78; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; font-weight: 700; }
+    .stat-item.green .num { color: #23a55a; }
+    .stat-item.red .num { color: #e94560; }
+    .stat-item.blue .num { color: #5865f2; }
+    .input-group { display: flex; gap: 8px; margin-bottom: 12px; }
+    .input-group input, .input-group textarea { flex: 1; background: #1e1f22; border: 1px solid #2b2d31; border-radius: 10px; padding: 12px 16px; color: white; font-size: 13px; outline: none; }
+    .input-group input:focus, .input-group textarea:focus { border-color: #5865f2; }
+    .input-group textarea { font-family: monospace; font-size: 12px; min-height: 80px; resize: vertical; }
+    .btn { padding: 10px 20px; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 12px; transition: 0.2s; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .btn-primary { background: #5865f2; color: white; }
+    .btn-primary:hover { background: #4752c4; }
+    .btn-success { background: #23a55a; color: white; }
+    .btn-success:hover { background: #1a8c4a; }
+    .btn-danger { background: #e94560; color: white; }
+    .btn-danger:hover { background: #d63851; }
+    .btn-warning { background: #f0b232; color: #111214; }
+    .btn-warning:hover { background: #d69e2a; }
+    .btn-outline { background: transparent; border: 1px solid #2b2d31; color: #b5bac1; }
+    .btn-outline:hover { border-color: #5865f2; color: white; }
+    .btn-sm { padding: 6px 12px; font-size: 10px; }
+    .btn-full { width: 100%; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+    .bot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+    .bot-card { background: #1e1f22; border-radius: 10px; padding: 12px; border: 1px solid #2b2d31; display: flex; justify-content: space-between; align-items: center; }
+    .bot-card .name { font-size: 13px; font-weight: 600; }
+    .bot-card .status { font-size: 10px; padding: 2px 8px; border-radius: 6px; font-weight: 700; }
+    .status-online { background: #23a55a20; color: #23a55a; border: 1px solid #23a55a40; }
+    .status-offline { background: #e9456020; color: #e94560; border: 1px solid #e9456040; }
+    .log-area { background: #00000040; border-radius: 10px; padding: 16px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.6; border: 1px solid #2b2d31; }
+    .log-area .log-entry { color: #b5bac1; }
+    .log-area .log-entry .time { color: #6d6f78; }
+    .log-area .log-entry .success { color: #23a55a; }
+    .log-area .log-entry .error { color: #e94560; }
+    .log-area .log-entry .info { color: #5865f2; }
+    .log-area:empty::after { content: 'SYSTEM_IDLE: Awaiting Commands...'; color: #6d6f7850; font-style: italic; }
+    .progress-bar { height: 6px; background: #2b2d31; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+    .progress-bar .fill { height: 100%; border-radius: 3px; transition: width 1s; }
+    .progress-bar .fill.green { background: #23a55a; }
+    .progress-bar .fill.blue { background: #5865f2; }
+    .progress-bar .fill.red { background: #e94560; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 10px; color: #6d6f78; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .token-input { width: 100%; min-height: 120px; background: #1e1f22; border: 1px solid #2b2d31; border-radius: 10px; padding: 12px; color: white; font-family: monospace; font-size: 11px; resize: vertical; outline: none; margin-bottom: 12px; }
+    .token-input:focus { border-color: #f0b232; }
+    .hidden { display: none !important; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 24px; border-radius: 10px; font-weight: 700; font-size: 13px; z-index: 9999; animation: slideUp 0.3s ease; }
+    .toast.success { background: #23a55a; color: white; }
+    .toast.error { background: #e94560; color: white; }
+    .toast.info { background: #5865f2; color: white; }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @media (max-width: 900px) { .container { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>🤖 CONTROL TOWER</h1>
+      <p>VEERA ON TOP • Advanced Bot Control Panel</p>
+    </div>
+    <div class="header-right">
+      <div class="badge">🟢 <span id="liveCount">0</span> Bots Online</div>
+      <button class="btn btn-success btn-sm" onclick="fetchStatus()">🔄 Refresh</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- MAIN COLUMN -->
+    <div class="main-col">
+      <!-- Stats -->
+      <div class="card">
+        <h2><span class="icon" style="background:#5865f220">📊</span> Bot Status</h2>
+        <div class="stats-grid">
+          <div class="stat-item blue"><div class="num" id="statTotal">0</div><div class="label">Total Bots</div></div>
+          <div class="stat-item green"><div class="num" id="statActive">0</div><div class="label">Active</div></div>
+          <div class="stat-item" style="border-color:#f0b23240"><div class="num" id="statUptime" style="color:#f0b232">0m</div><div class="label">Uptime</div></div>
+          <div class="stat-item red"><div class="num" id="statFailed">0</div><div class="label">Failed</div></div>
+        </div>
+      </div>
+
+      <!-- Bulk Command Center -->
+      <div class="card">
+        <h2><span class="icon" style="background:#23a55a20">🌐</span> Bulk Command Center</h2>
+        <div class="input-group">
+          <input type="text" id="inviteLink" placeholder="Paste Invite Link (discord.gg/...)" />
+          <button class="btn btn-success" onclick="joinAll()">Join All Bots</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <input type="text" id="targetGuild" placeholder="Guild ID (optional)" />
+          <input type="text" id="targetChannel" placeholder="Voice Channel ID" />
+        </div>
+        <div class="input-group">
+          <textarea id="massMsg" placeholder="Global Broadcast Message..."></textarea>
+          <button class="btn btn-primary" onclick="broadcastMsg()">Blast Message</button>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-success btn-sm" onclick="cmdAll('!play')">▶️ Play All</button>
+          <button class="btn btn-danger btn-sm" onclick="cmdAll('!stop')">⏹️ Stop All</button>
+          <button class="btn btn-outline btn-sm" onclick="cmdAll('!status')">📋 Status All</button>
+        </div>
+      </div>
+
+      <!-- Bot List -->
+      <div class="card">
+        <h2><span class="icon" style="background:#23a55a20">🤖</span> Bot Instances</h2>
+        <div id="botListContainer"><div class="bot-grid" id="botGrid"></div></div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card">
+        <h2>
+          <span class="icon" style="background:#e9456020">📟</span> Army Activity Log
+          <button class="btn btn-outline btn-sm" onclick="clearLogs()" style="margin-left:auto">Clear</button>
+        </h2>
+        <div class="log-area" id="logArea"></div>
+      </div>
+    </div>
+
+    <!-- SIDE COLUMN -->
+    <div class="side-col">
+      <!-- Bot Factory -->
+      <div class="card">
+        <h2><span class="icon" style="background:#f0b23220">🏭</span> Bot Factory</h2>
+        <p style="font-size:10px;color:#6d6f78;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Add Tokens to Initialize (one per line)</p>
+        <textarea class="token-input" id="tokenInput" placeholder="Paste tokens here (one per line)..."></textarea>
+        <div class="btn-group" style="margin-bottom:12px">
+          <button class="btn btn-outline btn-sm" onclick="validateTokens()">✅ Validate</button>
+          <button class="btn btn-warning btn-sm" onclick="initTokens()">🚀 Initialize All</button>
+        </div>
+        <div style="margin-bottom:12px">
+          <p style="font-size:10px;color:#6d6f78;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Invite Link (for Join All)</p>
+          <input type="text" id="sideInvite" placeholder="https://discord.gg/..." style="width:100%;background:#1e1f22;border:1px solid #2b2d31;border-radius:10px;padding:10px 14px;color:white;font-size:13px;outline:none" />
+        </div>
+        <button class="btn btn-success btn-full" onclick="joinAllSide()">🌐 Join All Bots to Server</button>
+      </div>
+
+      <!-- System Health -->
+      <div class="card">
+        <h2><span class="icon" style="background:#5865f220">⚡</span> System Health</h2>
+        <div style="margin-bottom:12px">
+          <div class="progress-label"><span>CPU Load</span><span id="cpuLabel">0%</span></div>
+          <div class="progress-bar"><div class="fill blue" id="cpuBar" style="width:0%"></div></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div class="progress-label"><span>RAM Usage</span><span id="ramLabel">0%</span></div>
+          <div class="progress-bar"><div class="fill green" id="ramBar" style="width:0%"></div></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div class="progress-label"><span>Bot Uptime</span><span id="uptimeLabel">0m</span></div>
+          <div class="progress-bar"><div class="fill" id="uptimeBar" style="width:0%;background:#f0b232"></div></div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-success btn-sm" onclick="cmdAll('!unmute')">🔊 Unmute All</button>
+          <button class="btn btn-danger btn-sm" onclick="cmdAll('!mute')">🔇 Mute All</button>
+          <button class="btn btn-primary btn-sm" onclick="location.reload()">🔄 Reload UI</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <script>
+    const startTime = Date.now();
+    let logs = [];
+
+    function showToast(msg, type = 'info') {
+      const el = document.createElement('div');
+      el.className = 'toast ' + type;
+      el.textContent = msg;
+      document.getElementById('toastContainer').appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+
+    function addLog(msg, type = 'info') {
+      const time = new Date().toLocaleTimeString();
+      logs.push({ time, msg, type });
+      const area = document.getElementById('logArea');
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="time">[${time}]</span> <span class="${type}">${msg}</span>`;
+      area.appendChild(entry);
+      area.scrollTop = area.scrollHeight;
+    }
+
+    function clearLogs() {
+      logs = [];
+      document.getElementById('logArea').innerHTML = '';
+    }
+
+    async function fetchStatus() {
+      try {
+        const health = await fetch('/health').then(r => r.json());
+        const bots = await fetch('/bots').then(r => r.json());
+        
+        document.getElementById('statTotal').textContent = health.bots || 0;
+        document.getElementById('statActive').textContent = bots.active || 0;
+        document.getElementById('liveCount').textContent = bots.active || 0;
+        
+        const failed = (bots.total || 0) - (bots.active || 0);
+        document.getElementById('statFailed').textContent = failed < 0 ? 0 : failed;
+        
+        const uptimeSec = Math.floor((Date.now() - startTime) / 1000);
+        const mins = Math.floor(uptimeSec / 60);
+        const secs = uptimeSec % 60;
+        document.getElementById('statUptime').textContent = mins + 'm ' + secs + 's';
+        
+        // Uptime bar (max 60 min = 100%)
+        const uptimePct = Math.min((uptimeSec / 3600) * 100, 100);
+        document.getElementById('uptimeLabel').textContent = mins + 'm';
+        document.getElementById('uptimeBar').style.width = uptimePct + '%';
+
+        // Build bot grid
+        const grid = document.getElementById('botGrid');
+        grid.innerHTML = '';
+        for (let i = 0; i < (bots.total || 0); i++) {
+          const isActive = i < (bots.active || 0);
+          grid.innerHTML += 
+            '<div class="bot-card">' +
+              '<span class="name">Bot ' + (i + 1) + '</span>' +
+              '<span class="status ' + (isActive ? 'status-online' : 'status-offline') + '">' + (isActive ? '🟢 Online' : '🔴 Offline') + '</span>' +
+            '</div>';
+        }
+        
+        if ((bots.total || 0) === 0) {
+          grid.innerHTML = '<div style="text-align:center;padding:20px;color:#6d6f78;grid-column:1/-1">No bots configured. Set DISCORD_TOKENS env variable.</div>';
+        }
+        
+        addLog('Status refreshed: ' + (bots.active || 0) + '/' + (bots.total || 0) + ' bots online', 'info');
+      } catch (e) {
+        addLog('Failed to fetch status: ' + e.message, 'error');
+      }
+    }
+
+    async function cmdAll(command) {
+      try {
+        const res = await fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command })
+        });
+        const data = await res.json();
+        addLog('Command "' + command + '" sent to ' + (data.sent || 0) + ' bots', 'success');
+        showToast('Command sent to ' + (data.sent || 0) + ' bots', 'success');
+      } catch (e) {
+        addLog('Command failed: ' + e.message, 'error');
+        showToast('Command failed: ' + e.message, 'error');
+      }
+    }
+
+    async function joinAll() {
+      const invite = document.getElementById('inviteLink').value || document.getElementById('sideInvite').value;
+      const vcId = document.getElementById('targetChannel').value;
+      
+      if (!invite) { showToast('Enter an invite link', 'error'); return; }
+      if (!vcId) { showToast('Enter a voice channel ID', 'error'); return; }
+      
+      try {
+        addLog('Joining all bots to ' + invite + ' (VC: ' + vcId + ')', 'info');
+        const res = await fetch('/api/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invite, vcId })
+        });
+        const data = await res.json();
+        addLog('Join command sent to ' + (data.sent || 0) + ' bots', 'success');
+        showToast('Joining ' + (data.sent || 0) + ' bots...', 'success');
+      } catch (e) {
+        addLog('Join failed: ' + e.message, 'error');
+        showToast('Join failed: ' + e.message, 'error');
+      }
+    }
+
+    async function joinAllSide() {
+      document.getElementById('inviteLink').value = document.getElementById('sideInvite').value;
+      await joinAll();
+    }
+
+    async function broadcastMsg() {
+      const msg = document.getElementById('massMsg').value;
+      if (!msg) { showToast('Enter a message', 'error'); return; }
+      try {
+        const res = await fetch('/api/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+        const data = await res.json();
+        addLog('Broadcast sent to ' + (data.sent || 0) + ' bots', 'success');
+        showToast('Broadcast sent!', 'success');
+        document.getElementById('massMsg').value = '';
+      } catch (e) {
+        addLog('Broadcast failed: ' + e.message, 'error');
+      }
+    }
+
+    async function validateTokens() {
+      const input = document.getElementById('tokenInput');
+      const rawTokens = input.value.split('\n').map(t => t.trim()).filter(t => t.length > 0);
+      if (rawTokens.length === 0) { showToast('No tokens to validate', 'error'); return; }
+      
+      showToast('Validating ' + rawTokens.length + ' tokens...', 'info');
+      addLog('Validating ' + rawTokens.length + ' tokens...', 'info');
+      
+      try {
+        const res = await fetch('/api/validate-tokens', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokens: rawTokens })
+        });
+        const data = await res.json();
+        input.value = (data.valid || []).join('\n');
+        addLog('Found ' + (data.valid || []).length + ' valid tokens', 'success');
+        showToast('Found ' + (data.valid || []).length + ' valid tokens', 'success');
+      } catch (e) {
+        addLog('Validation error: ' + e.message, 'error');
+      }
+    }
+
+    async function initTokens() {
+      const input = document.getElementById('tokenInput');
+      const tokens = input.value.split('\n').map(t => t.trim()).filter(t => t.length > 0);
+      if (tokens.length === 0) { showToast('No tokens to initialize', 'error'); return; }
+      
+      try {
+        const res = await fetch('/api/set-tokens', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokens })
+        });
+        const data = await res.json();
+        input.value = '';
+        addLog('Initialized ' + data.count + ' bots. Redeploying...', 'success');
+        showToast('Initialized ' + data.count + ' bots. Click Redeploy on Render.', 'success');
+      } catch (e) {
+        addLog('Init error: ' + e.message, 'error');
+      }
+    }
+
+    // Auto refresh
+    fetchStatus();
+    setInterval(fetchStatus, 10000);
+
+    // Simulate CPU/RAM (replace with real data from health endpoint)
+    setInterval(() => {
+      const cpu = Math.floor(Math.random() * 30) + 30;
+      const ram = Math.floor(Math.random() * 20) + 50;
+      document.getElementById('cpuLabel').textContent = cpu + '%';
+      document.getElementById('cpuBar').style.width = cpu + '%';
+      document.getElementById('ramLabel').textContent = ram + '%';
+      document.getElementById('ramBar').style.width = ram + '%';
+    }, 5000);
+  </script>
+</body>
+</html>

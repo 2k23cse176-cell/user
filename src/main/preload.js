@@ -15,8 +15,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('token-captured', subscription);
   },
   sendBroadcastAudio: (data) => ipcRenderer.send('broadcast-audio', data),
-  joinAllBotsToCurrentVC: () => ipcRenderer.send('join-all-bots-to-current-vc'),
-  leaveAllBotsFromVC: () => ipcRenderer.send('leave-all-bots-from-vc'),
   stopHeadlessBots: () => ipcRenderer.send('stop-headless-bots'),
   sendVeriyMode: (status) => ipcRenderer.send('veriy-mode-trigger', status),
   registerToken: (id, token) => ipcRenderer.invoke('register-token', { id, token }),
