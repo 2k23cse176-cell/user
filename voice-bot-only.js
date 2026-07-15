@@ -325,7 +325,7 @@ const server = http.createServer(async (req, res) => {
 
   <div class="card">
     <h2 style="margin-top:0;">Recent Server Logs</h2>
-    <pre id="logs" style="background:#020617;color:#e2e8f0;padding:16px;border-radius:14px;max-height:320px;overflow-y:auto;font-family:menlo,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;"></pre>
+    <pre id="logs" style="background:#020617;color:#e2e8f0;padding:16px;border-radius:14px;max-height:320px;overflow-y:auto;font-family:menlo,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;">Waiting for logs...</pre>
   </div>
 
   <script>
@@ -407,12 +407,28 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       statusEl.textContent = 'Joining bots to channel...';
-      const res = await fetch('/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channelId, guildId })
-      });
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch('/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channelId, guildId })
+        });
+
+        if (!res.ok) {
+          const errorResponse = await res.text();
+          statusEl.textContent = 'Join request failed: ' + errorResponse;
+          fetchLogs();
+          return;
+        }
+
+        data = await res.json();
+      } catch (error) {
+        statusEl.textContent = 'Join request error: ' + (error.message || String(error));
+        fetchLogs();
+        return;
+      }
+
       if (data.joinedAll) {
         statusEl.textContent = 'All bots joined successfully.';
       } else {
@@ -421,6 +437,11 @@ const server = http.createServer(async (req, res) => {
       if (data.results && data.results.length) {
         const joinedCount = data.results.filter(r => r.connected).length;
         statusEl.textContent += ' (' + joinedCount + '/' + data.results.length + ' connected)';
+      }
+      if (data.results && data.results.some(r => r.lastError)) {
+        const errors = data.results.filter(r => r.lastError).map(r => 'Bot ' + r.bot + ': ' + r.lastError);
+        statusEl.textContent += ' Errors detected.';
+        logsEl.textContent = errors.join('\n') + '\n\n' + logsEl.textContent;
       }
       fetchStatus();
       fetchLogs();
