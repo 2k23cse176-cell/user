@@ -234,6 +234,15 @@ const sendCorsHeaders = (res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 };
 
+// simple in-memory log buffer for diagnostics
+const diagLogs = [];
+function pushLog(line) {
+  const entry = { time: new Date().toISOString(), line };
+  diagLogs.push(entry);
+  if (diagLogs.length > 1000) diagLogs.shift();
+  console.log(line);
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     sendCorsHeaders(res);
@@ -402,6 +411,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.url === '/logs' && req.method === 'GET') {
+    sendCorsHeaders(res);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ logs: diagLogs.slice(-200) }));
+    return;
+  }
+
   if (req.url === '/stay' && req.method === 'POST') {
     sendCorsHeaders(res);
     for (const bot of bots) {
@@ -427,7 +443,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       for (const bot of bots) {
-        await bot.joinChannel(targetChannelId, targetGuildId);
+        await bot.joinChannel(targetChannelId, targetGuildId).catch(e => pushLog(`Join error bot: ${e.message || e}`));
         // Add randomized delay between joins to reduce rate-limit/reconnect collisions
         const delayMs = 1500 + Math.floor(Math.random() * 2000); // 1.5s - 3.5s
         await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -436,11 +452,37 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'joining', channelId: targetChannelId, guildId: targetGuildId }));
     } catch (error) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: error.message }));
+        pushLog(`Join endpoint error: ${error.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
     }
     return;
   }
+
+    if (req.url === '/retry-failed' && req.method === 'POST') {
+      sendCorsHeaders(res);
+      try {
+        const retried = [];
+        for (const bot of bots) {
+          if (bot.voiceState !== 'connected') {
+            try {
+              await bot.joinChannel(bot.channelId || bots[0]?.channelId, bot.guildId || bots[0]?.guildId);
+              retried.push(true);
+            } catch (e) {
+              pushLog(`Retry failed for bot: ${e.message || e}`);
+              retried.push(false);
+            }
+            await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 2000)));
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'retried', retried }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
 
   if (req.url === '/leave' && req.method === 'POST') {
     for (const bot of bots) {
