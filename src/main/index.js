@@ -36,6 +36,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Fake device switches removed to allow real microphone access.
 
 let mainWindow;
+let lastVoiceContext = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -102,6 +103,44 @@ app.on('ready', () => {
 
   // --- SOUNDPAD BROADCASTER (The Nuclear 4-Bot Fix!) ---
   const { spawn } = require('child_process');
+  const activeInjectors = new Map(); // token -> childProcess
+
+  const launchVoiceInjector = (token, channelId, guildId) => {
+    if (!token || !channelId || !guildId) return;
+
+    const current = activeInjectors.get(token);
+    if (current && current.channelId === channelId) return;
+
+    if (current) {
+      try { current.process.kill(); } catch (e) {}
+      activeInjectors.delete(token);
+    }
+
+    console.log(`🌋 STUTTER-FREE BLAST: Launching for ${token.substring(0, 10)}...`);
+    const injector = spawn('node', [
+      path.join(__dirname, '../../headless/voice_injector.js'),
+      token,
+      channelId,
+      guildId
+    ]);
+
+    activeInjectors.set(token, { process: injector, channelId });
+
+    injector.stdout.on('data', (data) => console.log(`[Bot-Headless]: ${data}`));
+    injector.stderr.on('data', (data) => console.error(`[Bot-Headless Error]: ${data}`));
+  };
+
+  const joinAllProfilesToCurrentChannel = async (channelId, guildId) => {
+    const profiles = store.get('profiles', []);
+    for (let i = 0; i < profiles.length; i++) {
+      const profile = profiles[i];
+      if (profile.token) {
+        launchVoiceInjector(profile.token, channelId, guildId);
+        await new Promise(r => setTimeout(r, 1800));
+      }
+    }
+  };
+
   ipcMain.on('broadcast-audio', async (event, manualData) => {
     // 1. Browser-based sync (Lightweight)
     webContents.getAllWebContents().forEach(wc => {
@@ -145,33 +184,25 @@ app.on('ready', () => {
     }
   });
 
-  // --- BOT MANAGEMENT ---
-  const activeInjectors = new Map(); // token -> childProcess
   ipcMain.on('vc-context-update', (event, ctx) => {
     if (!ctx.token || !ctx.channelId || !ctx.guildId) return;
-    
-    // Check if we're already blasting this SPECIFIC channel
-    const current = activeInjectors.get(ctx.token);
-    if (current && current.channelId === ctx.channelId) return;
+    lastVoiceContext = { token: ctx.token, guildId: ctx.guildId, channelId: ctx.channelId };
+    launchVoiceInjector(ctx.token, ctx.channelId, ctx.guildId);
+  });
 
-    // Kill old one if it exists
-    if (current) {
-        current.process.kill();
-        activeInjectors.delete(ctx.token);
+  ipcMain.on('join-all-bots-to-current-vc', async () => {
+    if (!lastVoiceContext?.channelId || !lastVoiceContext?.guildId) {
+      console.error('🌋 No current voice context available.');
+      return;
     }
+    await joinAllProfilesToCurrentChannel(lastVoiceContext.channelId, lastVoiceContext.guildId);
+  });
 
-    console.log(`🌋 STUTTER-FREE BLAST: Launching for ${ctx.token.substring(0,10)}...`);
-    const injector = spawn('node', [
-        path.join(__dirname, '../../headless/voice_injector.js'),
-        ctx.token,
-        ctx.channelId,
-        ctx.guildId
-    ]);
-
-    activeInjectors.set(ctx.token, { process: injector, channelId: ctx.channelId });
-
-    injector.stdout.on('data', (data) => console.log(`[Bot-Headless]: ${data}`));
-    injector.stderr.on('data', (data) => console.error(`[Bot-Headless Error]: ${data}`));
+  ipcMain.on('leave-all-bots-from-vc', () => {
+    for (const entry of activeInjectors.values()) {
+      try { entry.process.kill(); } catch (e) {}
+    }
+    activeInjectors.clear();
   });
 
   ipcMain.on('stop-headless-bots', () => {
