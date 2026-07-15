@@ -313,10 +313,10 @@ const server = http.createServer(async (req, res) => {
       <input id="inputChannel" placeholder="Voice Channel ID" />
     </div>
     <div class="actions">
-      <button id="joinBtn" style="background:#22c55e;color:#0f172a;">Join Channel</button>
-      <button id="stay" style="background:#0ea5e9;color:#fff;">Rejoin Saved Channel</button>
-      <button id="leave" style="background:#ef4444;color:#fff;">Leave Channel</button>
-      <button id="refresh" style="background:#475569;color:#fff;">Refresh Status</button>
+      <button id="joinBtn" type="button" style="background:#22c55e;color:#0f172a;">Join Channel</button>
+      <button id="stay" type="button" style="background:#0ea5e9;color:#fff;">Rejoin Saved Channel</button>
+      <button id="leave" type="button" style="background:#ef4444;color:#fff;">Leave Channel</button>
+      <button id="refresh" type="button" style="background:#475569;color:#fff;">Refresh Status</button>
     </div>
     <div id="message" style="margin:18px 0 0;color:#cbd5e1;"></div>
   </div>
@@ -328,14 +328,34 @@ const server = http.createServer(async (req, res) => {
     <pre id="logs" style="background:#020617;color:#e2e8f0;padding:16px;border-radius:14px;max-height:320px;overflow-y:auto;font-family:menlo,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;">Waiting for logs...</pre>
   </div>
 
-  <script>
-    const statusEl = document.getElementById('message');
-    const botsEl = document.getElementById('bots');
-    const logsEl = document.getElementById('logs');
-    const guildInput = document.getElementById('inputGuild');
-    const channelInput = document.getElementById('inputChannel');
+  <div class="card">
+    <h2 style="margin-top:0;">Debug Info</h2>
+    <pre id="debug" style="background:#111827;color:#9ca3af;padding:16px;border-radius:14px;max-height:180px;overflow-y:auto;font-family:menlo,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;">Debug output will appear here...</pre>
+  </div>
 
-    const renderStatus = (data) => {
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const statusEl = document.getElementById('message');
+      const botsEl = document.getElementById('bots');
+      const logsEl = document.getElementById('logs');
+      const debugEl = document.getElementById('debug');
+      const guildInput = document.getElementById('inputGuild');
+      const channelInput = document.getElementById('inputChannel');
+      const joinBtn = document.getElementById('joinBtn');
+      const stayBtn = document.getElementById('stay');
+      const leaveBtn = document.getElementById('leave');
+      const refreshBtn = document.getElementById('refresh');
+
+      const debug = (message) => {
+        if (debugEl) {
+          debugEl.textContent = '[' + new Date().toLocaleTimeString() + '] ' + message + '\n' + debugEl.textContent;
+        }
+      };
+
+      debug('DOM fully loaded');
+      debug('button elements found: ' + [joinBtn && 'join', stayBtn && 'stay', leaveBtn && 'leave', refreshBtn && 'refresh'].filter(Boolean).join(', '));
+
+      const renderStatus = (data) => {
       if (!data || !Array.isArray(data.bots)) {
         statusEl.textContent = 'Unable to load bot status.';
         botsEl.innerHTML = '';
@@ -386,6 +406,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         statusEl.textContent = 'Failed to load status';
         botsEl.innerHTML = '';
+        debug('fetchStatus error: ' + (e.message || String(e)));
       }
     };
 
@@ -396,10 +417,12 @@ const server = http.createServer(async (req, res) => {
         renderLogs(data);
       } catch (e) {
         logsEl.textContent = 'Failed to load logs.';
+        debug('fetchLogs error: ' + (e.message || String(e)));
       }
     };
 
-    document.getElementById('joinBtn').addEventListener('click', async () => {
+    joinBtn.addEventListener('click', async () => {
+      debug('joinBtn clicked');
       const channelId = channelInput.value.trim();
       const guildId = guildInput.value.trim();
       if (!channelId) {
@@ -450,23 +473,42 @@ const server = http.createServer(async (req, res) => {
       fetchLogs();
     });
 
-    document.getElementById('stay').addEventListener('click', async () => {
+    stayBtn.addEventListener('click', async () => {
+      debug('stayBtn clicked');
       statusEl.textContent = 'Rejoining saved channel...';
-      const res = await fetch('/stay', { method: 'POST' });
-      const data = await res.json();
-      statusEl.textContent = data.status || 'Stay requested';
+      try {
+        const res = await fetch('/stay', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Stay request failed');
+        }
+        statusEl.textContent = data.status || 'Stay requested';
+      } catch (error) {
+        statusEl.textContent = 'Stay request failed: ' + (error.message || String(error));
+        debug('stayBtn error: ' + (error.message || String(error)));
+      }
       fetchStatus();
     });
 
-    document.getElementById('leave').addEventListener('click', async () => {
+    leaveBtn.addEventListener('click', async () => {
+      debug('leaveBtn clicked');
       statusEl.textContent = 'Leaving voice channel...';
-      const res = await fetch('/leave', { method: 'POST' });
-      const data = await res.json();
-      statusEl.textContent = data.status || 'Leave requested';
+      try {
+        const res = await fetch('/leave', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Leave request failed');
+        }
+        statusEl.textContent = data.status || 'Leave requested';
+      } catch (error) {
+        statusEl.textContent = 'Leave request failed: ' + (error.message || String(error));
+        debug('leaveBtn error: ' + (error.message || String(error)));
+      }
       fetchStatus();
     });
 
-    document.getElementById('refresh').addEventListener('click', () => {
+    refreshBtn.addEventListener('click', () => {
+      debug('refreshBtn clicked');
       fetchStatus();
       fetchLogs();
     });
@@ -609,6 +651,7 @@ const server = http.createServer(async (req, res) => {
     }
 
   if (req.url === '/leave' && req.method === 'POST') {
+    sendCorsHeaders(res);
     for (const bot of bots) {
       bot.leaveChannel();
     }
