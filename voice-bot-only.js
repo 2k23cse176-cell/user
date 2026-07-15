@@ -406,7 +406,8 @@ const server = http.createServer(async (req, res) => {
         statusEl.textContent = 'Channel ID is required to join.';
         return;
       }
-      statusEl.textContent = 'Joining bots to channel...';
+      statusEl.textContent = 'Sending join request...';
+      logsEl.textContent = 'Sending join request to /join...\n' + logsEl.textContent;
       let data;
       try {
         const res = await fetch('/join', {
@@ -418,6 +419,7 @@ const server = http.createServer(async (req, res) => {
         if (!res.ok) {
           const errorResponse = await res.text();
           statusEl.textContent = 'Join request failed: ' + errorResponse;
+          logsEl.textContent = 'Join request failed: ' + errorResponse + '\n' + logsEl.textContent;
           fetchLogs();
           return;
         }
@@ -425,6 +427,7 @@ const server = http.createServer(async (req, res) => {
         data = await res.json();
       } catch (error) {
         statusEl.textContent = 'Join request error: ' + (error.message || String(error));
+        logsEl.textContent = 'Join request error: ' + (error.message || String(error)) + '\n' + logsEl.textContent;
         fetchLogs();
         return;
       }
@@ -544,7 +547,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      pushLog(`Starting join for ${bots.length} bots into ${targetChannelId}`);
+      pushLog(`API /join called with channel=${targetChannelId} guild=${targetGuildId || 'none'}`);
       const results = [];
       for (let i = 0; i < bots.length; i++) {
         const bot = bots[i];
