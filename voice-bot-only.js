@@ -323,9 +323,15 @@ const server = http.createServer(async (req, res) => {
 
   <div class="card" id="bots"></div>
 
+  <div class="card">
+    <h2 style="margin-top:0;">Recent Server Logs</h2>
+    <pre id="logs" style="background:#020617;color:#e2e8f0;padding:16px;border-radius:14px;max-height:320px;overflow-y:auto;font-family:menlo,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;"></pre>
+  </div>
+
   <script>
     const statusEl = document.getElementById('message');
     const botsEl = document.getElementById('bots');
+    const logsEl = document.getElementById('logs');
     const guildInput = document.getElementById('inputGuild');
     const channelInput = document.getElementById('inputChannel');
 
@@ -340,7 +346,7 @@ const server = http.createServer(async (req, res) => {
       const readyCount = data.bots.filter(bot => bot.ready).length;
       const connectedCount = data.bots.filter(bot => bot.connected).length;
 
-      statusEl.textContent = 'Ready ' + readyCount + '/' + total + ' • Connected ' + connectedCount + '/' + total;
+      statusEl.textContent = 'Ready ' + readyCount + '/' + total + ' • Connected ' + connectedCount + '/' + total + (data.joinedAll ? ' • ALL JOINED' : '');
 
       if (total === 0) {
         botsEl.innerHTML = '<p>No bots are configured. Set BOT_TOKENS on Render and restart.</p>';
@@ -361,6 +367,17 @@ const server = http.createServer(async (req, res) => {
       }).join('');
     };
 
+    const renderLogs = (data) => {
+      if (!data || !Array.isArray(data.logs)) {
+        logsEl.textContent = 'Unable to load logs.';
+        return;
+      }
+      logsEl.textContent = data.logs
+        .map(entry => '[' + entry.time + '] ' + entry.line)
+        .join('\n');
+      logsEl.scrollTop = logsEl.scrollHeight;
+    };
+
     const fetchStatus = async () => {
       try {
         const res = await fetch('/status');
@@ -369,6 +386,16 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         statusEl.textContent = 'Failed to load status';
         botsEl.innerHTML = '';
+      }
+    };
+
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch('/logs');
+        const data = await res.json();
+        renderLogs(data);
+      } catch (e) {
+        logsEl.textContent = 'Failed to load logs.';
       }
     };
 
@@ -391,7 +418,12 @@ const server = http.createServer(async (req, res) => {
       } else {
         statusEl.textContent = 'Join completed, but not all bots connected.';
       }
+      if (data.results && data.results.length) {
+        const joinedCount = data.results.filter(r => r.connected).length;
+        statusEl.textContent += ' (' + joinedCount + '/' + data.results.length + ' connected)';
+      }
       fetchStatus();
+      fetchLogs();
     });
 
     document.getElementById('stay').addEventListener('click', async () => {
@@ -410,9 +442,16 @@ const server = http.createServer(async (req, res) => {
       fetchStatus();
     });
 
-    document.getElementById('refresh').addEventListener('click', fetchStatus);
+    document.getElementById('refresh').addEventListener('click', () => {
+      fetchStatus();
+      fetchLogs();
+    });
     fetchStatus();
-    setInterval(fetchStatus, 10000);
+    fetchLogs();
+    setInterval(() => {
+      fetchStatus();
+      fetchLogs();
+    }, 10000);
   </script>
 </body>
 </html>`);
@@ -436,6 +475,13 @@ const server = http.createServer(async (req, res) => {
       channelId: bot.channelId,
       guildId: bot.guildId,
       lastError: bot.lastError,
+    }));
+
+    const readyCount = botStates.filter((bot) => bot.ready).length;
+    const connectedCount = botStates.filter((bot) => bot.connected).length;
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
       bots: botStates,
       online: readyCount,
       active: connectedCount,
@@ -443,6 +489,13 @@ const server = http.createServer(async (req, res) => {
       savedChannel: botStates.find((bot) => bot.connected)?.channelId || null,
       savedGuild: botStates.find((bot) => bot.connected)?.guildId || null,
     }));
+    return;
+  }
+
+  if (req.url === '/logs' && req.method === 'GET') {
+    sendCorsHeaders(res);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ logs: diagLogs.slice(-100) }));
     return;
   }
 
@@ -470,10 +523,15 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      pushLog(`Starting join for ${bots.length} bots into ${targetChannelId}`);
       const results = [];
       for (let i = 0; i < bots.length; i++) {
         const bot = bots[i];
-        await bot.joinChannel(targetChannelId, targetGuildId).catch(e => pushLog(`Join error bot ${i + 1}: ${e.message || e}`));
+        const success = await bot.joinChannel(targetChannelId, targetGuildId).catch(e => {
+          const message = e?.message || String(e);
+          pushLog(`Join error bot ${i + 1}: ${message}`);
+          return false;
+        });
         results.push({
           bot: i + 1,
           ready: bot.status === 'ready',
@@ -482,7 +540,9 @@ const server = http.createServer(async (req, res) => {
           channelId: bot.channelId,
           guildId: bot.guildId,
           lastError: bot.lastError,
+          success,
         });
+        pushLog(`Bot ${i + 1} join result: ${success ? 'connected' : 'failed'} (state=${bot.voiceState})`);
         const delayMs = 1500 + Math.floor(Math.random() * 2000);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
@@ -491,9 +551,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'joining', channelId: targetChannelId, guildId: targetGuildId, joinedAll, results }));
     } catch (error) {
-        pushLog(`Join endpoint error: ${error.message}`);
+        const message = error?.message || String(error);
+        pushLog(`Join endpoint error: ${message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: error.message }));
+        res.end(JSON.stringify({ error: message }));
     }
     return;
   }
