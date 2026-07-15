@@ -1,5 +1,5 @@
 const { Client } = require('discord.js-selfbot-v13');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, NoSubscriberBehavior, StreamType } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, NoSubscriberBehavior, StreamType, VoiceConnectionStatus } = require('@discordjs/voice');
 const { Readable } = require('stream');
 const http = require('http');
 
@@ -201,8 +201,22 @@ bots.forEach((bot, index) => {
 console.log(`🚀 Starting ${bots.length} voice bot(s) from BOT_TOKENS/BOT_TOKEN`);
 console.log(`🧠 Health endpoint enabled on port ${port}`);
 
+const sendCorsHeaders = (res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+};
+
 const server = http.createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    sendCorsHeaders(res);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.url === '/' && req.method === 'GET') {
+    sendCorsHeaders(res);
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`<!DOCTYPE html>
 <html lang="en">
@@ -214,40 +228,63 @@ const server = http.createServer(async (req, res) => {
     body { background:#0b1220; color:#e5e7eb; font-family:system-ui, sans-serif; margin:0; padding:24px; }
     h1 { margin:0 0 8px; font-size:clamp(2rem, 3vw, 2.75rem); }
     p { margin:4px 0 16px; color:#9ca3af; }
+    input, button { font:inherit; }
+    input { width:100%; max-width:420px; border:1px solid #334155; border-radius:12px; padding:12px 14px; background:#0f172a; color:#e2e8f0; margin-top:10px; }
     button { cursor:pointer; border:none; padding:14px 18px; border-radius:14px; font-weight:700; letter-spacing:.02em; }
     .row { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
-    .card { background:rgba(17,24,39,.95); border:1px solid rgba(148,163,184,.15); border-radius:18px; padding:18px; min-width:280px; flex:1; }
+    .card { background:rgba(15, 23, 42, .95); border:1px solid rgba(148,163,184,.15); border-radius:18px; padding:18px; width:100%; max-width:920px; }
     .bot { background:#111827; border:1px solid rgba(148,163,184,.12); border-radius:16px; padding:14px; margin-bottom:12px; }
-    .bot span { display:inline-block; min-width:80px; color:#94a3b8; }
+    .bot span { display:inline-block; min-width:90px; color:#94a3b8; }
     .status-ready { color:#22c55e; }
     .status-offline { color:#f97316; }
     .status-vc { color:#38bdf8; }
-    .actions { display:flex; flex-wrap:wrap; gap:10px; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
     .actions button { flex:1 1 160px; }
+    .form-row { display:grid; gap:12px; margin-bottom:16px; }
     a { color:#38bdf8; }
   </style>
 </head>
 <body>
   <h1>Render Bot Monitor</h1>
-  <p>This page monitors the hosted voice bots on Render. Use the buttons to keep them in VC or make them leave.</p>
-  <div class="actions">
-    <button id="stay" style="background:#22c55e;color:#0f172a;">Stay in VC</button>
-    <button id="leave" style="background:#ef4444;color:#fff;">Leave VC</button>
-    <button id="refresh" style="background:#2563eb;color:#fff;">Refresh Status</button>
+  <p>Hosted bot panel for Render. Join bots into a voice channel from this page and keep them online even when your Electron app is closed.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Voice Channel Control</h2>
+    <div class="form-row">
+      <input id="inputGuild" placeholder="Guild ID (optional)" />
+      <input id="inputChannel" placeholder="Voice Channel ID" />
+    </div>
+    <div class="actions">
+      <button id="joinBtn" style="background:#22c55e;color:#0f172a;">Join Channel</button>
+      <button id="stay" style="background:#0ea5e9;color:#fff;">Rejoin Saved Channel</button>
+      <button id="leave" style="background:#ef4444;color:#fff;">Leave Channel</button>
+      <button id="refresh" style="background:#475569;color:#fff;">Refresh Status</button>
+    </div>
+    <div id="message" style="margin:18px 0 0;color:#cbd5e1;"></div>
   </div>
-  <div id="message" style="margin:18px 0 0;color:#cbd5e1;"></div>
-  <div id="bots"></div>
+
+  <div class="card" id="bots"></div>
+
   <script>
     const statusEl = document.getElementById('message');
     const botsEl = document.getElementById('bots');
+    const guildInput = document.getElementById('inputGuild');
+    const channelInput = document.getElementById('inputChannel');
 
     const renderStatus = (data) => {
       if (!data || !data.bots) {
         statusEl.textContent = 'Unable to load bot status.';
         return;
       }
+
       const count = data.bots.length;
       statusEl.textContent = 'Loaded ' + count + ' bot' + (count !== 1 ? 's' : '') + '.';
+
+      if (count === 0) {
+        botsEl.innerHTML = '<p>No bots are configured. Set BOT_TOKENS on Render and restart.</p>';
+        return;
+      }
+
       botsEl.innerHTML = data.bots.map(function(bot) {
         return '<div class="bot">'
           + '<div><strong>Bot ' + bot.index + '</strong></div>'
@@ -269,16 +306,34 @@ const server = http.createServer(async (req, res) => {
       }
     };
 
+    document.getElementById('joinBtn').addEventListener('click', async () => {
+      const channelId = channelInput.value.trim();
+      const guildId = guildInput.value.trim();
+      if (!channelId) {
+        statusEl.textContent = 'Channel ID is required to join.';
+        return;
+      }
+      statusEl.textContent = 'Joining bots to channel...';
+      const res = await fetch('/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId, guildId })
+      });
+      const data = await res.json();
+      statusEl.textContent = data.status || 'Join requested';
+      fetchStatus();
+    });
+
     document.getElementById('stay').addEventListener('click', async () => {
-      statusEl.textContent = 'Keeping bots in VC...';
+      statusEl.textContent = 'Rejoining saved channel...';
       const res = await fetch('/stay', { method: 'POST' });
       const data = await res.json();
-      statusEl.textContent = data.status || 'Stay in VC requested';
+      statusEl.textContent = data.status || 'Stay requested';
       fetchStatus();
     });
 
     document.getElementById('leave').addEventListener('click', async () => {
-      statusEl.textContent = 'Leaving VC...';
+      statusEl.textContent = 'Leaving voice channel...';
       const res = await fetch('/leave', { method: 'POST' });
       const data = await res.json();
       statusEl.textContent = data.status || 'Leave requested';
@@ -295,12 +350,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === '/health' && req.method === 'GET') {
+    sendCorsHeaders(res);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', bots: bots.length }));
     return;
   }
 
   if (req.url === '/status' && req.method === 'GET') {
+    sendCorsHeaders(res);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       bots: bots.map((bot, index) => ({
@@ -308,12 +365,17 @@ const server = http.createServer(async (req, res) => {
         ready: bot.status === 'ready',
         channelId: bot.channelId,
         guildId: bot.guildId,
-      }))
+      })),
+      online: bots.filter((bot) => bot.status === 'ready').length,
+      active: bots.filter((bot) => bot.channelId).length,
+      savedChannel: bots[0]?.channelId || null,
+      savedGuild: bots[0]?.guildId || null,
     }));
     return;
   }
 
   if (req.url === '/stay' && req.method === 'POST') {
+    sendCorsHeaders(res);
     for (const bot of bots) {
       if (bot.channelId && bot.guildId) {
         bot.joinChannel(bot.channelId, bot.guildId);
@@ -326,6 +388,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/join' && req.method === 'POST') {
     try {
+      sendCorsHeaders(res);
       const body = await parseJSONBody(req);
       const targetChannelId = body.channelId || body.channel || null;
       const targetGuildId = body.guildId || body.guild || null;

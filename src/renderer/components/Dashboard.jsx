@@ -21,6 +21,66 @@ export default function Dashboard({
   const [massInvite, setMassInvite] = React.useState('');
   const [massMsg, setMassMsg] = React.useState('');
   const [sysStats, setSysStats] = React.useState({ cpu: 45, ram: 62 });
+  const [renderHost, setRenderHost] = React.useState(() => window.localStorage.getItem('renderHost') || '');
+  const [remoteGuildId, setRemoteGuildId] = React.useState('');
+  const [remoteChannelId, setRemoteChannelId] = React.useState('');
+
+  const renderBaseUrl = renderHost.trim().replace(/\/+$/, '');
+  const callRenderService = async (path, method = 'GET', body = null) => {
+    if (!renderBaseUrl) {
+      throw new Error('Render host URL is required');
+    }
+    const url = `${renderBaseUrl}${path}`;
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Render service error: ${res.status} ${text}`);
+    }
+    return res.json();
+  };
+
+  React.useEffect(() => {
+    window.localStorage.setItem('renderHost', renderHost || '');
+  }, [renderHost]);
+
+  const remoteJoin = async () => {
+    const channelId = remoteChannelId.trim();
+    if (!channelId) {
+      showNotification('Enter a channel ID for remote join', 'error');
+      return;
+    }
+    try {
+      const payload = { channelId, guildId: remoteGuildId.trim() || undefined };
+      await callRenderService('/join', 'POST', payload);
+      showNotification('Render host is joining bots to voice channel', 'success');
+    } catch (error) {
+      showNotification(error.message, 'error');
+    }
+  };
+
+  const remoteStay = async () => {
+    try {
+      await callRenderService('/stay', 'POST');
+      showNotification('Render host rejoined bots to saved channel', 'success');
+    } catch (error) {
+      showNotification(error.message, 'error');
+    }
+  };
+
+  const remoteLeave = async () => {
+    try {
+      await callRenderService('/leave', 'POST');
+      showNotification('Render host left voice channels', 'success');
+    } catch (error) {
+      showNotification(error.message, 'error');
+    }
+  };
 
   // Mock stats update
   React.useEffect(() => {
@@ -112,36 +172,38 @@ export default function Dashboard({
                 <input 
                   type="text" 
                   id="target-guild-id"
-                  placeholder="GUILD ID"
+                    value={remoteGuildId}
+                    onChange={(e) => setRemoteGuildId(e.target.value)}
+                    placeholder="GUILD ID"
+                    className="w-full bg-discord-darker border border-discord-dark px-4 py-3 rounded-xl text-white font-mono text-xs outline-none focus:ring-1 focus:ring-discord-green transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[9px] font-black text-discord-muted uppercase tracking-widest">Manual Channel ID</p>
+                  <input 
+                    type="text" 
+                    id="target-channel-id"
+                    value={remoteChannelId}
+                    onChange={(e) => setRemoteChannelId(e.target.value)}
+                    placeholder="CHANNEL ID"
+                    className="w-full bg-discord-darker border border-discord-dark px-4 py-3 rounded-xl text-white font-mono text-xs outline-none focus:ring-1 focus:ring-discord-green transition-all"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2 mb-6">
+                <p className="text-[9px] font-black text-discord-muted uppercase tracking-widest">Render Host URL</p>
+                <input
+                  type="text"
+                  value={renderHost}
+                  onChange={(e) => setRenderHost(e.target.value)}
+                  placeholder="https://your-render-service.onrender.com"
                   className="w-full bg-discord-darker border border-discord-dark px-4 py-3 rounded-xl text-white font-mono text-xs outline-none focus:ring-1 focus:ring-discord-green transition-all"
                 />
               </div>
-              <div className="space-y-2">
-                <p className="text-[9px] font-black text-discord-muted uppercase tracking-widest">Manual Channel ID</p>
-                <input 
-                  type="text" 
-                  id="target-channel-id"
-                  placeholder="CHANNEL ID"
-                  className="w-full bg-discord-darker border border-discord-dark px-4 py-3 rounded-xl text-white font-mono text-xs outline-none focus:ring-1 focus:ring-discord-green transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex gap-4 p-2 bg-discord-darker rounded-2xl border border-discord-dark shadow-inner">
-                <input 
-                  type="text" 
-                  placeholder="Paste Invite Link (discord.gg/...) "
-                  className="flex-1 bg-transparent border-none outline-none px-6 py-4 text-white font-medium placeholder:text-discord-muted"
-                  value={inviteLink}
-                  onChange={(e) => setInviteLink(e.target.value)}
-                />
-                <button 
-                  onClick={() => onJoinAll(inviteLink)}
-                  className="bg-discord-green hover:bg-discord-green/80 text-white px-10 py-4 rounded-xl font-black shadow-lg shadow-discord-green/20 transition-all active:scale-95 uppercase tracking-widest"
-                >
-                  Join All Bots
-                </button>
+              <div className="flex flex-wrap gap-3 mb-6">
+                <button onClick={remoteJoin} className="bg-discord-green/10 text-discord-green border border-discord-green/20 py-3 rounded-xl text-[10px] font-black hover:bg-discord-green hover:text-white transition-all active:scale-95">REMOTE JOIN</button>
+                <button onClick={remoteStay} className="bg-discord-blue/10 text-discord-blue border border-discord-blue/20 py-3 rounded-xl text-[10px] font-black hover:bg-discord-blue hover:text-white transition-all active:scale-95">REMOTE STAY</button>
+                <button onClick={remoteLeave} className="bg-discord-red/10 text-discord-red border border-discord-red/20 py-3 rounded-xl text-[10px] font-black hover:bg-discord-red hover:text-white transition-all active:scale-95">REMOTE LEAVE</button>
               </div>
 
               <div className="flex gap-4 p-2 bg-discord-darker rounded-2xl border border-discord-dark shadow-inner">
