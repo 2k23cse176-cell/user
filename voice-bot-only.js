@@ -117,7 +117,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         voiceConnection.subscribe(audioPlayer);
 
         try {
-          await entersState(voiceConnection, VoiceConnectionStatus.Ready, 20000);
+          await entersState(voiceConnection, VoiceConnectionStatus.Ready, 30000);
           bot.channelId = channel.id;
           bot.guildId = guild.id;
           bot.voiceState = 'connected';
@@ -428,7 +428,9 @@ const server = http.createServer(async (req, res) => {
 
       for (const bot of bots) {
         await bot.joinChannel(targetChannelId, targetGuildId);
-        await new Promise((resolve) => setTimeout(resolve, 1200));
+        // Add randomized delay between joins to reduce rate-limit/reconnect collisions
+        const delayMs = 1500 + Math.floor(Math.random() * 2000); // 1.5s - 3.5s
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
