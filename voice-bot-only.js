@@ -58,11 +58,13 @@ const bots = tokens.slice(0, 20).map((token, index) => {
     guildId: null,
     status: 'offline',
     voiceState: 'disconnected',
+    lastError: null,
     async joinChannel(targetChannelId, targetGuildId) {
-      if (!targetChannelId) return;
+      if (!targetChannelId) return false;
+      bot.lastError = null;
       pushLog(`Attempting join for bot ${index + 1} -> ${targetChannelId}`);
-      if (voiceConnection && bot.channelId === targetChannelId) {
-        console.log(`ℹ️ [Bot ${index + 1}] Already in channel ${targetChannelId}`);
+      if (voiceConnection && bot.channelId === targetChannelId && voiceConnection.state?.status === 'ready') {
+        console.log(`ℹ️ [Bot ${index + 1}] Already in ready channel ${targetChannelId}`);
         return;
       }
 
@@ -79,7 +81,10 @@ const bots = tokens.slice(0, 20).map((token, index) => {
 
       try {
         const channel = await client.channels.fetch(targetChannelId);
-        if (!channel || !channel.isVoice?.()) {
+        const isVoiceChannel = channel && (typeof channel.isVoice === 'function'
+          ? channel.isVoice()
+          : ['GUILD_VOICE', 'GUILD_STAGE_VOICE', 'GUILD_STAGE_INSTANCE'].includes(channel.type));
+        if (!channel || !isVoiceChannel) {
           console.error(`❌ [Bot ${index + 1}] Channel ${targetChannelId} was not found or is not a voice channel`);
           bot.voiceState = 'failed';
           return;
@@ -117,6 +122,14 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         audioPlayer.play(resource);
         voiceConnection.subscribe(audioPlayer);
 
+        voiceConnection.on('error', (error) => {
+          const message = error?.message || String(error);
+          console.error(`❌ [Bot ${index + 1}] Voice connection error:`, message);
+          pushLog(`Bot ${index + 1} voice error: ${message}`);
+          bot.lastError = message;
+          bot.voiceState = 'failed';
+        });
+
         try {
           await entersState(voiceConnection, VoiceConnectionStatus.Ready, 30000);
           bot.channelId = channel.id;
@@ -147,7 +160,9 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         });
 
         audioPlayer.on('error', error => {
-          console.error(`❌ [Bot ${index + 1}] Audio player error:`, error.message);
+          const message = error?.message || String(error);
+          console.error(`❌ [Bot ${index + 1}] Audio player error:`, message);
+          bot.lastError = message;
           bot.voiceState = 'failed';
         });
 
@@ -157,12 +172,15 @@ const bots = tokens.slice(0, 20).map((token, index) => {
           }
         }, keepAliveMs);
       } catch (error) {
+        const message = error?.message || String(error);
+        bot.lastError = message;
         bot.voiceState = 'failed';
         bot.channelId = null;
         bot.guildId = null;
-        pushLog(`Bot ${index + 1} join failed: ${error.message}`);
-        console.error(`❌ [Bot ${index + 1}] Join failed: ${error.message}`);
+        pushLog(`Bot ${index + 1} join failed: ${message}`);
+        console.error(`❌ [Bot ${index + 1}] Join failed: ${message}`);
       }
+      return bot.voiceState === 'connected';
     },
     leaveChannel() {
       if (voiceConnection) {
@@ -312,25 +330,33 @@ const server = http.createServer(async (req, res) => {
     const channelInput = document.getElementById('inputChannel');
 
     const renderStatus = (data) => {
-      if (!data || !data.bots) {
+      if (!data || !Array.isArray(data.bots)) {
         statusEl.textContent = 'Unable to load bot status.';
+        botsEl.innerHTML = '';
         return;
       }
 
-      const count = data.bots.length;
-      statusEl.textContent = 'Loaded ' + count + ' bot' + (count !== 1 ? 's' : '') + '.';
+      const total = data.bots.length;
+      const readyCount = data.bots.filter(bot => bot.ready).length;
+      const connectedCount = data.bots.filter(bot => bot.connected).length;
 
-      if (count === 0) {
+      statusEl.textContent = 'Ready ' + readyCount + '/' + total + ' • Connected ' + connectedCount + '/' + total;
+
+      if (total === 0) {
         botsEl.innerHTML = '<p>No bots are configured. Set BOT_TOKENS on Render and restart.</p>';
         return;
       }
 
       botsEl.innerHTML = data.bots.map(function(bot) {
+        const statusClass = bot.connected ? 'status-vc' : bot.ready ? 'status-ready' : 'status-offline';
+        const statusLabel = bot.connected ? 'Connected' : bot.ready ? 'Ready' : 'Offline';
         return '<div class="bot">'
           + '<div><strong>Bot ' + bot.index + '</strong></div>'
-          + '<div><span>Status:</span><span class="' + (bot.ready ? 'status-ready' : 'status-offline') + '">' + (bot.ready ? 'Ready' : 'Offline') + '</span></div>'
+          + '<div><span>Status:</span><span class="' + statusClass + '">' + statusLabel + '</span></div>'
+          + '<div><span>Voice State:</span><span>' + (bot.voiceState || 'unknown') + '</span></div>'
           + '<div><span>Channel:</span><span>' + (bot.channelId || 'None') + '</span></div>'
           + '<div><span>Guild:</span><span>' + (bot.guildId || 'None') + '</span></div>'
+          + (bot.lastError ? '<div><span>Error:</span><span class="status-offline">' + bot.lastError + '</span></div>' : '')
           + '</div>';
       }).join('');
     };
@@ -360,7 +386,11 @@ const server = http.createServer(async (req, res) => {
         body: JSON.stringify({ channelId, guildId })
       });
       const data = await res.json();
-      statusEl.textContent = data.status || 'Join requested';
+      if (data.joinedAll) {
+        statusEl.textContent = 'All bots joined successfully.';
+      } else {
+        statusEl.textContent = 'Join completed, but not all bots connected.';
+      }
       fetchStatus();
     });
 
@@ -398,27 +428,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/status' && req.method === 'GET') {
     sendCorsHeaders(res);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      bots: bots.map((bot, index) => ({
-        index: index + 1,
-        ready: bot.status === 'ready',
-        channelId: bot.channelId,
-        guildId: bot.guildId,
-        voiceState: bot.voiceState,
-      })),
-      online: bots.filter((bot) => bot.status === 'ready').length,
-      active: bots.filter((bot) => bot.channelId).length,
-      savedChannel: bots[0]?.channelId || null,
-      savedGuild: bots[0]?.guildId || null,
+    const botStates = bots.map((bot, index) => ({
+      index: index + 1,
+      ready: bot.status === 'ready',
+      connected: bot.voiceState === 'connected',
+      voiceState: bot.voiceState,
+      channelId: bot.channelId,
+      guildId: bot.guildId,
+      lastError: bot.lastError,
+      bots: botStates,
+      online: readyCount,
+      active: connectedCount,
+      joinedAll: connectedCount === botStates.length && botStates.length > 0,
+      savedChannel: botStates.find((bot) => bot.connected)?.channelId || null,
+      savedGuild: botStates.find((bot) => bot.connected)?.guildId || null,
     }));
-    return;
-  }
-
-  if (req.url === '/logs' && req.method === 'GET') {
-    sendCorsHeaders(res);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ logs: diagLogs.slice(-200) }));
     return;
   }
 
@@ -446,15 +470,26 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      for (const bot of bots) {
-        await bot.joinChannel(targetChannelId, targetGuildId).catch(e => pushLog(`Join error bot: ${e.message || e}`));
-        // Add randomized delay between joins to reduce rate-limit/reconnect collisions
-        const delayMs = 1500 + Math.floor(Math.random() * 2000); // 1.5s - 3.5s
+      const results = [];
+      for (let i = 0; i < bots.length; i++) {
+        const bot = bots[i];
+        await bot.joinChannel(targetChannelId, targetGuildId).catch(e => pushLog(`Join error bot ${i + 1}: ${e.message || e}`));
+        results.push({
+          bot: i + 1,
+          ready: bot.status === 'ready',
+          connected: bot.voiceState === 'connected',
+          voiceState: bot.voiceState,
+          channelId: bot.channelId,
+          guildId: bot.guildId,
+          lastError: bot.lastError,
+        });
+        const delayMs = 1500 + Math.floor(Math.random() * 2000);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
 
+      const joinedAll = results.every((item) => item.connected);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'joining', channelId: targetChannelId, guildId: targetGuildId }));
+      res.end(JSON.stringify({ status: 'joining', channelId: targetChannelId, guildId: targetGuildId, joinedAll, results }));
     } catch (error) {
         pushLog(`Join endpoint error: ${error.message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
