@@ -1,5 +1,5 @@
 const { Client } = require('discord.js-selfbot-v13');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, NoSubscriberBehavior, StreamType, VoiceConnectionStatus } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 const { Readable } = require('stream');
 const http = require('http');
 
@@ -57,6 +57,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
     channelId: null,
     guildId: null,
     status: 'offline',
+    voiceState: 'disconnected',
     async joinChannel(targetChannelId, targetGuildId) {
       if (!targetChannelId) return;
       if (voiceConnection && bot.channelId === targetChannelId) {
@@ -71,10 +72,15 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         } catch (e) {}
       }
 
+      bot.voiceState = 'connecting';
+      bot.channelId = null;
+      bot.guildId = null;
+
       try {
         const channel = await client.channels.fetch(targetChannelId);
         if (!channel || !channel.isVoice?.()) {
           console.error(`❌ [Bot ${index + 1}] Channel ${targetChannelId} was not found or is not a voice channel`);
+          bot.voiceState = 'failed';
           return;
         }
 
@@ -83,6 +89,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
           : channel.guild || await client.guilds.fetch(channel.guildId || channel.guild?.id);
         if (!guild) {
           console.error(`❌ [Bot ${index + 1}] Could not resolve guild for ${channel.id}`);
+          bot.voiceState = 'failed';
           return;
         }
 
@@ -109,12 +116,28 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         audioPlayer.play(resource);
         voiceConnection.subscribe(audioPlayer);
 
-        bot.channelId = channel.id;
-        bot.guildId = guild.id;
+        try {
+          await entersState(voiceConnection, VoiceConnectionStatus.Ready, 20000);
+          bot.channelId = channel.id;
+          bot.guildId = guild.id;
+          bot.voiceState = 'connected';
+          console.log(`💚 [Bot ${index + 1}] Voice connection ready`);
+        } catch (readyError) {
+          bot.voiceState = 'failed';
+          console.error(`❌ [Bot ${index + 1}] Voice connection failed to become ready: ${readyError.message}`);
+          voiceConnection.destroy();
+          audioPlayer?.stop();
+          voiceConnection = null;
+          audioPlayer = null;
+          bot.channelId = null;
+          bot.guildId = null;
+          return;
+        }
 
         voiceConnection.on('stateChange', (oldState, newState) => {
           console.log(`🔌 [Bot ${index + 1}] Voice state: ${oldState.status} -> ${newState.status}`);
           if (newState.status === 'disconnected' || newState.status === 'destroyed') {
+            bot.voiceState = 'disconnected';
             console.error(`❌ [Bot ${index + 1}] Voice disconnected, attempting reconnect...`);
             setTimeout(() => bot.joinChannel(targetChannelId, targetGuildId), 5000);
           }
@@ -122,6 +145,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
 
         audioPlayer.on('error', error => {
           console.error(`❌ [Bot ${index + 1}] Audio player error:`, error.message);
+          bot.voiceState = 'failed';
         });
 
         setInterval(() => {
@@ -130,6 +154,9 @@ const bots = tokens.slice(0, 20).map((token, index) => {
           }
         }, keepAliveMs);
       } catch (error) {
+        bot.voiceState = 'failed';
+        bot.channelId = null;
+        bot.guildId = null;
         console.error(`❌ [Bot ${index + 1}] Join failed: ${error.message}`);
       }
     },
@@ -365,6 +392,7 @@ const server = http.createServer(async (req, res) => {
         ready: bot.status === 'ready',
         channelId: bot.channelId,
         guildId: bot.guildId,
+        voiceState: bot.voiceState,
       })),
       online: bots.filter((bot) => bot.status === 'ready').length,
       active: bots.filter((bot) => bot.channelId).length,
@@ -399,7 +427,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       for (const bot of bots) {
-        bot.joinChannel(targetChannelId, targetGuildId);
+        await bot.joinChannel(targetChannelId, targetGuildId);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
