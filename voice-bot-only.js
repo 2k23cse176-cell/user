@@ -518,6 +518,7 @@ const server = http.createServer(async (req, res) => {
       fetchStatus();
       fetchLogs();
     }, 10000);
+  });
   </script>
 </body>
 </html>`);
