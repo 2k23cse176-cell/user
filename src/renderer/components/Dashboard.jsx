@@ -226,6 +226,7 @@ export default function Dashboard({
                   Blast Message
                 </button>
               </div>
+            </div>
           </section>
         </div>
 
