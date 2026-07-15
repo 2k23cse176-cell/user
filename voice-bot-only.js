@@ -60,6 +60,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
     voiceState: 'disconnected',
     async joinChannel(targetChannelId, targetGuildId) {
       if (!targetChannelId) return;
+      pushLog(`Attempting join for bot ${index + 1} -> ${targetChannelId}`);
       if (voiceConnection && bot.channelId === targetChannelId) {
         console.log(`ℹ️ [Bot ${index + 1}] Already in channel ${targetChannelId}`);
         return;
@@ -121,9 +122,11 @@ const bots = tokens.slice(0, 20).map((token, index) => {
           bot.channelId = channel.id;
           bot.guildId = guild.id;
           bot.voiceState = 'connected';
+          pushLog(`Bot ${index + 1} connected to ${channel.id}`);
           console.log(`💚 [Bot ${index + 1}] Voice connection ready`);
         } catch (readyError) {
           bot.voiceState = 'failed';
+          pushLog(`Bot ${index + 1} failed to ready: ${readyError.message}`);
           console.error(`❌ [Bot ${index + 1}] Voice connection failed to become ready: ${readyError.message}`);
           voiceConnection.destroy();
           audioPlayer?.stop();
@@ -157,6 +160,7 @@ const bots = tokens.slice(0, 20).map((token, index) => {
         bot.voiceState = 'failed';
         bot.channelId = null;
         bot.guildId = null;
+        pushLog(`Bot ${index + 1} join failed: ${error.message}`);
         console.error(`❌ [Bot ${index + 1}] Join failed: ${error.message}`);
       }
     },
