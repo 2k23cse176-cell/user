@@ -115,6 +115,36 @@ function stopMicRouting() {
     try { micStreamReq.destroy(); } catch(e) {}
     micStreamReq = null;
   }
+
+  // Accept a one-time token from the UI and use it privately to open a Puppeteer session
+  const loginTokenMatch = req.url.match(/^\/session\/(\d+)\/login$/);
+  if(loginTokenMatch && req.method==='POST'){
+    const idx = Number(loginTokenMatch[1]) - 1;
+    if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
+    try{
+      const body = await parseJSONBody(req);
+      const token = (body && body.token) ? String(body.token).trim() : null;
+      if(!token){res.writeHead(400);res.end(JSON.stringify({error:'token required'}));return;}
+      // respond immediately and use the token only for this Puppeteer session (do not persist)
+      res.writeHead(202);res.end(JSON.stringify({status:'Login initiated (private)'}));
+      (async ()=>{
+        try{
+          console.log('Private login via token for session', idx+1);
+          const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+          const headless = (process.env.PUPPETEER_HEADLESS||'true') === 'true';
+          const browser = await puppeteer.launch({headless, executablePath: execPath, args:['--no-sandbox','--disable-setuid-sandbox','--disable-infobars','--window-size=1280,800']});
+          const page = await browser.newPage();
+          await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
+          await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, token);
+          await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
+          // capture a screenshot for inspection (no token saved)
+          try{ require('fs').mkdirSync('./sessions',{recursive:true}); await page.screenshot({path:`./sessions/session-${idx+1}-private.png`, fullPage:true}); console.log('Saved private screenshot for session',idx+1); }catch(e){console.error('Screenshot failed',e.message)}
+          await browser.close();
+        }catch(e){console.error('Private login failed for session',idx+1, e.message);}      
+      })();
+    }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+    return;
+  }
   if (micFfmpeg) {
     try { micFfmpeg.stdin.end(); } catch(e) {}
     try { micFfmpeg.kill(); } catch(e) {}
@@ -336,6 +366,19 @@ fetchStatus();setInterval(fetchStatus,10000)
     return;
   }
 
+  // Serve session screenshots saved by Puppeteer
+  const ssMatch = req.url.match(/^\/session-screenshot\/(\d+)$/);
+  if(ssMatch && req.method==='GET'){
+    const si = Number(ssMatch[1]);
+    const p = `./sessions/session-${si}.png`;
+    if(require('fs').existsSync(p)){
+      const img = require('fs').readFileSync(p);
+      res.writeHead(200,{'Content-Type':'image/png'});
+      res.end(img);
+    }else{res.writeHead(404);res.end('No screenshot');}
+    return;
+  }
+
   if(req.url==='/stay'&&req.method==='POST'){bots.forEach((b)=>{if(b.channelId&&b.guildId)b.joinChannel(b.channelId,b.guildId).catch(()=>{});});res.writeHead(200);res.end(JSON.stringify({status:'rejoining'}));return;}
 
   if(req.url==='/join'&&req.method==='POST'){
@@ -360,6 +403,10 @@ fetchStatus();setInterval(fetchStatus,10000)
 <div class="card"><p>Bot: ${bot.client.user?.tag || 'Unknown'}</p><p>Token: ${bot.token?bot.token.slice(0,6)+'...'+bot.token.slice(-6):'N/A'}</p><p>Status: ${bot.status}</p><p>Voice state: ${bot.voiceState}</p><p>Channel: ${bot.channelId || 'N/A'}</p><p>Guild: ${bot.guildId || 'N/A'}</p><p>Verification: ${queued ? 'Needed' : (bot.needsVerification ? 'Needed' : 'OK')}</p><p>Queue target: ${queued ? queued.guildName : 'N/A'}</p></div>
 <div class="card"><h2>Invite / Captcha</h2>
 <input id="inviteInput" type="text" placeholder="discord.gg/xxxxxx"/>
+<div style="margin-top:12px">
+  <input id="tokenInput" type="text" placeholder="Paste token here (kept private)" style="width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px" />
+  <div style="margin-top:8px"><button class="btn-green" id="loginTokenBtn">Login With Token (Private)</button></div>
+</div>
 <div class="row"><button class="btn-green" id="joinInviteBtn">Invite Bot</button></div>
 <div class="row"><textarea id="captchaSolution" placeholder="Paste captcha solution"></textarea></div>
 <div class="row"><button class="btn-blue" id="solveBtn">Solve Captcha</button><button class="btn-red" id="skipBtn">Skip</button></div>
@@ -367,6 +414,12 @@ fetchStatus();setInterval(fetchStatus,10000)
 </div>
 <script>
 const sessionMsg=document.getElementById('sessionMsg');
+document.getElementById('loginTokenBtn').onclick=async()=>{
+  const tok=document.getElementById('tokenInput').value.trim();
+  if(!tok){sessionMsg.textContent='Enter token';return}
+  sessionMsg.textContent='Logging in (private)...';
+  try{const r=await fetch('/session/${idx+1}/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});const d=await r.json();sessionMsg.textContent=d.status||d.error;}catch(e){sessionMsg.textContent='Error: '+e.message}
+};
 document.getElementById('joinInviteBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){sessionMsg.textContent='Enter invite';return}sessionMsg.textContent='Inviting...';const r=await fetch('/session/${idx+1}/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
 document.getElementById('solveBtn').onclick=async()=>{const txt=document.getElementById('captchaSolution').value.trim();if(!txt){sessionMsg.textContent='Enter solution';return}sessionMsg.textContent='Solving...';const r=await fetch('/session/${idx+1}/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({solution:txt})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
 document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Skipping...';const r=await fetch('/session/${idx+1}/skip',{method:'POST'});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
@@ -428,7 +481,14 @@ document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Ski
         await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
         await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, bot.token);
         await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
-        console.log('Launched Discord for bot', idx+1);
+        // Save a screenshot of the launched session so it can be inspected
+        try{
+          const sessDir = './sessions';
+          try{ require('fs').mkdirSync(sessDir,{recursive:true}); }catch(e){}
+          const shotPath = `${sessDir}/session-${idx+1}.png`;
+          await page.screenshot({path: shotPath, fullPage: true});
+          console.log('Launched Discord for bot', idx+1, 'screenshot saved to', shotPath);
+        }catch(e){ console.error('Screenshot failed for bot', idx+1, e.message); }
       }catch(e){console.error('Launch failed for bot', idx+1, e.message);}    
     })();
     return;
