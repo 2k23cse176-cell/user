@@ -282,8 +282,10 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2>
 <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
   <a href="/login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
+  <a href="/extension-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Extension Login</a>
 </div>
-<div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer.</div>
+<div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer. Use the extension login page only for extension-based token flows.</div>
+<div class="msg">Use <code>/extension-login</code> only for extension token pages.</div>
 <div class="bot-grid" id="botGrid"></div></div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
@@ -393,6 +395,14 @@ document.getElementById('check').addEventListener('click', async()=>{
   }catch(e){ setMsg('Failed: '+e.message); }
 });
 document.getElementById('viewAll').addEventListener('click', ()=>{ window.open('/login/sessions','_blank'); });
+</script></body></html>`);
+    return;
+  }
+
+  if(req.url==='/extension-login'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea,input[type=text]{width:100%;border-radius:8px;padding:12px;margin-top:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Extension Token Login</h1><p>This page is reserved for any extension-based token login flow. It is separate from the server-side login page.</p><div class="card"><textarea id="tok" placeholder="Paste extension token here" rows="5"></textarea><div><button id="login">Use Extension Login</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.95rem">This keeps extension-style login separate from your backend-only login page.</p><div id="msg" style="margin-top:16px;color:#cbd5e1;white-space:pre-wrap;"></div></div><script>
+document.getElementById('login').addEventListener('click',()=>{document.getElementById('msg').textContent='Extension login page is separate. Use this route only when the extension needs it.';});
 </script></body></html>`);
     return;
   }
