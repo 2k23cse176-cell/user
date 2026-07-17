@@ -115,36 +115,6 @@ function stopMicRouting() {
     try { micStreamReq.destroy(); } catch(e) {}
     micStreamReq = null;
   }
-
-  // Accept a one-time token from the UI and use it privately to open a Puppeteer session
-  const loginTokenMatch = req.url.match(/^\/session\/(\d+)\/login$/);
-  if(loginTokenMatch && req.method==='POST'){
-    const idx = Number(loginTokenMatch[1]) - 1;
-    if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
-    try{
-      const body = await parseJSONBody(req);
-      const token = (body && body.token) ? String(body.token).trim() : null;
-      if(!token){res.writeHead(400);res.end(JSON.stringify({error:'token required'}));return;}
-      // respond immediately and use the token only for this Puppeteer session (do not persist)
-      res.writeHead(202);res.end(JSON.stringify({status:'Login initiated (private)'}));
-      (async ()=>{
-        try{
-          console.log('Private login via token for session', idx+1);
-          const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
-          const headless = (process.env.PUPPETEER_HEADLESS||'true') === 'true';
-          const browser = await puppeteer.launch({headless, executablePath: execPath, args:['--no-sandbox','--disable-setuid-sandbox','--disable-infobars','--window-size=1280,800']});
-          const page = await browser.newPage();
-          await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
-          await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, token);
-          await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
-          // capture a screenshot for inspection (no token saved)
-          try{ require('fs').mkdirSync('./sessions',{recursive:true}); await page.screenshot({path:`./sessions/session-${idx+1}-private.png`, fullPage:true}); console.log('Saved private screenshot for session',idx+1); }catch(e){console.error('Screenshot failed',e.message)}
-          await browser.close();
-        }catch(e){console.error('Private login failed for session',idx+1, e.message);}      
-      })();
-    }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
-  }
   if (micFfmpeg) {
     try { micFfmpeg.stdin.end(); } catch(e) {}
     try { micFfmpeg.kill(); } catch(e) {}
