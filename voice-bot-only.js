@@ -290,7 +290,7 @@ document.getElementById('deafBtn').onclick=()=>va('/audio/deafen','Deafening...'
 document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafening...')
 document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
-function openSession(idx){window.open('/session/'+idx,'_blank')}
+function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0,fullscreen=yes')}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -532,7 +532,17 @@ fetchStatus();setInterval(fetchStatus,2000)
   res.writeHead(404);res.end(JSON.stringify({error:'not found'}));
 });
 
-server.listen(port,()=>console.log(`🌐 HTTP on port ${port}`));
+function openChromePage(url){
+  if(process.platform==='win32'){
+    try{spawn('cmd',['/c','start','chrome',url],{detached:true,stdio:'ignore'}).unref();}catch(e){console.error('Unable to open Chrome:',e.message);}
+  } else if(process.platform==='darwin'){
+    spawn('open',[url],{detached:true,stdio:'ignore'}).unref();
+  } else {
+    spawn('xdg-open',[url],{detached:true,stdio:'ignore'}).unref();
+  }
+}
+
+server.listen(port,()=>{console.log(`🌐 HTTP on port ${port}`);openChromePage(`http://127.0.0.1:${port}/`);});
 setInterval(()=>process.stdout.write('.'),60000);
 
 function extractInviteCode(input){
