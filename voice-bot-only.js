@@ -253,7 +253,12 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <button class="btn-blue" id="undeafBtn">🙊 Undeafen</button>
 </div>
 <div class="msg" id="audioMsg"></div></div>
-<div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2><div class="bot-grid" id="botGrid"></div></div>
+<div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2>
+<div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
+  <a href="/local-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Local Login</a>
+  <button class="btn-teal" id="pasteAllBtn">Paste & Login All</button>
+</div>
+<div class="bot-grid" id="botGrid"></div></div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
 <button class="btn-green" id="startMic">▶ Start Mic</button>
@@ -315,6 +320,33 @@ async function pasteTokenLogin(idx){
     setTimeout(()=>{ clearInterval(t1); send(); },1500);
   }catch(e){ vcMsg.textContent='Paste login failed: '+e.message; }
 }
+async function pasteTokenLoginAll(){
+  try{
+    // Try clipboard first
+    let tok = null;
+    try{ tok = await navigator.clipboard.readText(); if(tok && tok.trim()) tok = tok.trim(); else tok = null; }catch(e){ tok = null; }
+    if(!tok){ tok = prompt('Paste token for all bots (will not be sent to server)'); }
+    if(!tok){ vcMsg.textContent='No token provided'; return; }
+    // Get number of bots from status endpoint
+    const r = await fetch('/status'); if(!r.ok){ vcMsg.textContent='Failed to get bot count'; return; }
+    const d = await r.json(); const n = (d.bots||[]).length || 0;
+    if(n<=0){ vcMsg.textContent='No bots'; return; }
+    vcMsg.textContent='Opening login tabs for '+n+' bots...';
+    for(let i=0;i<n;i++){
+      const winName = 'local-login-'+Date.now()+'-'+i;
+      const win = window.open('/local-login','_blank');
+      const origin = location.origin;
+      const send = ()=>{ try{ if(win && !win.closed) win.postMessage({token:tok}, origin); }catch(e){} };
+      const t1 = setInterval(()=>{ if(win && !win.closed) send(); else clearInterval(t1); },300);
+      setTimeout(()=>{ clearInterval(t1); send(); },1500);
+      // small delay to avoid overwhelming popup blockers
+      await new Promise(r=>setTimeout(r,350));
+    }
+    vcMsg.textContent='Opened login tabs';
+  }catch(e){ vcMsg.textContent='Paste login all failed: '+e.message; }
+}
+
+document.getElementById('pasteAllBtn').onclick = pasteTokenLoginAll;
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
