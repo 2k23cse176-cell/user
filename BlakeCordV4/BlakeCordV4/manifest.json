@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "BlakeCord V4",
+  "version": "4.0.0",
+  "description": "BlakeCord V4 — Black & Gold Edition by Blake. Premium Discord Voice Engine.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://ptb.discord.com/*",
+    "https://canary.discord.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://discord.com/*",
+        "https://ptb.discord.com/*",
+        "https://canary.discord.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injector.js", "assets/*.gif", "icons/icon16.png", "icons/icon48.png", "icons/icon128.png"],
+      "matches": [
+        "https://discord.com/*",
+        "https://ptb.discord.com/*",
+        "https://canary.discord.com/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
