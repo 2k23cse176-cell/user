@@ -1,6 +1,6 @@
 const { Client } = require('discord.js-selfbot-v13');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, AudioPlayerStatus, entersState } = require('@discordjs/voice');
-const { Readable, PassThrough } = require('stream');
+const { Readable } = require('stream');
 const { spawn } = require('child_process');
 const ffmpeg = require('ffmpeg-static');
 const http = require('http');
@@ -33,10 +33,9 @@ let globalAudioProcessKilled = false;
 const bots = [];
 const verificationQueue = [];
 
-// Mic routing
-let micPassThrough = null;
 let micFfmpeg = null;
 let micActive = false;
+let micStreamReq = null; // single long-lived upload request
 
 // ============================================================
 // AUDIO
@@ -81,14 +80,17 @@ async function playAudio() {
 playSilence();
 
 // ============================================================
-// MIC ROUTING — browser streams mic audio to server via multipart uploads
+// MIC ROUTING — SINGLE long-lived POST stream → single FFmpeg → all bots
+// Browser opens one POST to /mic/upload, keeps it open, sends chunks
+// Server pipes the entire request body to a single FFmpeg stdin
+// This ensures FFmpeg gets ONE continuous webm stream, not separate files
 // ============================================================
 function startMicRouting() {
   if (micActive) return;
   micActive = true;
-  
-  // FFmpeg converts incoming webm/opus chunks to raw PCM for Discord
+  // Single persistent FFmpeg process — reads webm from stdin, outputs raw PCM
   micFfmpeg = spawn(ffmpeg, [
+    '-f', 'webm',   // explicitly tell FFmpeg input is webm
     '-i', 'pipe:0',
     '-af', 'volume=2.0',
     '-f', 's16le',
@@ -99,33 +101,25 @@ function startMicRouting() {
   ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
   micFfmpeg.stderr.on('data', d => { const t=d.toString().trim(); if(t) console.log('Mic FFmpeg:',t); });
-  micFfmpeg.on('error', e => { console.error('❌ Mic FFmpeg:', e.message); stopMicRouting(); });
+  micFfmpeg.on('error', e => { console.error('❌ Mic FFmpeg:', e.message); });
+  micFfmpeg.on('exit', () => { if (micActive) startMicRouting(); });
   
-  const resource = createAudioResource(micFfmpeg.stdout, {
-    inputType: StreamType.Raw,
-    inlineVolume: false
-  });
+  const resource = createAudioResource(micFfmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: false });
   globalPlayer.play(resource);
-
-  micFfmpeg.on('exit', () => {
-    if (micActive) startMicRouting();
-  });
 }
 
 function stopMicRouting() {
   micActive = false;
+  if (micStreamReq) {
+    try { micStreamReq.destroy(); } catch(e) {}
+    micStreamReq = null;
+  }
   if (micFfmpeg) {
     try { micFfmpeg.stdin.end(); } catch(e) {}
     try { micFfmpeg.kill(); } catch(e) {}
     micFfmpeg = null;
   }
   playSilence();
-}
-
-function writeMicChunk(chunk) {
-  if (micFfmpeg && micActive && micFfmpeg.stdin && !micFfmpeg.stdin.destroyed) {
-    try { micFfmpeg.stdin.write(chunk); } catch(e) {}
-  }
 }
 
 // ============================================================
@@ -190,9 +184,6 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
   return bot;
 });
 
-// ============================================================
-// PROCESS
-// ============================================================
 process.on('unhandledRejection',e=>console.error('❌ Unhandled:',e));
 process.on('SIGTERM',()=>{if(globalAudioProcess){globalAudioProcessKilled=true;try{globalAudioProcess.kill()}catch(e){}}stopMicRouting();bots.forEach(b=>b.shutdown());process.exit(0);});
 process.on('SIGINT',()=>{if(globalAudioProcess){globalAudioProcessKilled=true;try{globalAudioProcess.kill()}catch(e){}}stopMicRouting();bots.forEach(b=>b.shutdown());process.exit(0);});
@@ -206,7 +197,7 @@ console.log(`🚀 ${bots.length} bot(s) on port ${port}`);
 const server=http.createServer(async(req,res)=>{
   res.setHeader('Access-Control-Allow-Origin','*');
   res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type,Transfer-Encoding');
   if(req.method==='OPTIONS'){res.writeHead(200);res.end();return;}
 
   if(req.url==='/'&&req.method==='GET'){
@@ -296,16 +287,13 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/audio/upload'&&req.method==='POST'){
     const ws=fs.createWriteStream('./shared_audio.mp3');
-    req.pipe(ws);
-    ws.on('finish',()=>{res.writeHead(200);res.end(JSON.stringify({status:'uploaded'}));});
-    ws.on('error',err=>{res.writeHead(500);res.end(JSON.stringify({error:err.message}));});
-    return;
+    req.pipe(ws);ws.on('finish',()=>{res.writeHead(200);res.end(JSON.stringify({status:'uploaded'}));});
+    ws.on('error',err=>{res.writeHead(500);res.end(JSON.stringify({error:err.message}));});return;
   }
 
   if(req.url==='/audio/play'&&req.method==='POST'){
     if(!fs.existsSync('./shared_audio.mp3')){res.writeHead(400);res.end(JSON.stringify({error:'No audio'}));return;}
-    try{if(!await playAudio())throw new Error('Failed');res.writeHead(200);res.end(JSON.stringify({status:'playing'}));}
-    catch(err){res.writeHead(500);res.end(JSON.stringify({error:err.message}));}
+    try{if(!await playAudio())throw new Error('Failed');res.writeHead(200);res.end(JSON.stringify({status:'playing'}));}catch(err){res.writeHead(500);res.end(JSON.stringify({error:err.message}));}
     return;
   }
 
@@ -313,8 +301,7 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/audio/volume'&&req.method==='POST'){
     try{const b=await parseJSONBody(req);const v=parseFloat(b.volume);if(!isNaN(v)&&v>=0&&v<=2.0){globalVolume=v;if(isPlaying)playAudio();}res.writeHead(200);res.end(JSON.stringify({status:'ok',volume:globalVolume}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
+    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
   const updateVS=(mute,deaf)=>{globalMute=mute;globalDeaf=deaf;for(const b of bots){if(b.channelId&&b.guildId&&b.voiceState==='connected'&&b.voiceConnection){try{const g=b.client.guilds.cache.get(b.guildId);if(g){const vc=joinVoiceChannel({channelId:b.channelId,guildId:b.guildId,adapterCreator:g.voiceAdapterCreator,group:b.client.user.id,selfDeaf:globalDeaf,selfMute:globalMute});b.voiceConnection=vc;vc.subscribe(globalPlayer);}}catch(e){}}}};
@@ -334,13 +321,14 @@ fetchStatus();setInterval(fetchStatus,10000)
   if(req.url==='/join'&&req.method==='POST'){
     try{const b=await parseJSONBody(req);const ch=b.channelId||b.channel||null;const gu=b.guildId||b.guild||null;if(!ch){res.writeHead(400);res.end(JSON.stringify({error:'channelId required'}));return;}
     const results=await Promise.all(bots.map(async(bot,i)=>{if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};const s=await bot.joinChannel(ch,gu);return{bot:i+1,success:s,connected:bot.voiceState==='connected',error:bot.lastError};}));
-    res.writeHead(200);res.end(JSON.stringify({status:'done',results}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
+    res.writeHead(200);res.end(JSON.stringify({status:'done',results}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
   if(req.url==='/leave'&&req.method==='POST'){for(const b of bots)b.leaveChannel();res.writeHead(200);res.end(JSON.stringify({status:'left'}));return;}
 
+  // ================================================================
+  // VERIFICATION PAGE
+  // ================================================================
   if(req.url==='/verification'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
     res.end(`<!DOCTYPE html>
@@ -354,35 +342,42 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 .verify-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
 .verify-card{background:#111827;border:1px solid rgba(148,163,184,.12);border-radius:14px;padding:16px;font-size:.85rem;position:relative}
 .verify-card h3{margin:0 0 8px;font-size:1rem;color:#e5e7eb}
-.verify-card .type{color:#94a3b8;font-size:12px;margin-bottom:8px}
+.verify-card .bot-status{color:#94a3b8;font-size:12px;margin-bottom:8px}
 .verify-card .guild{color:#38bdf8;font-size:12px;margin-bottom:10px}
 .verify-card textarea{width:100%;min-height:50px;margin-top:8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;font-family:inherit;font-size:12px;resize:vertical;}
 .verify-card button{margin-top:8px;width:100%;}
-.btn-green{background:#22c55e;color:#0f172a}.btn-red{background:#ef4444;color:#fff}.btn-blue{background:#0ea5e9;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
+.btn-green{background:#22c55e;color:#0f172a}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
 </style></head><body>
 <h1>🔐 Verification Solver</h1>
 <div class="card">
+<p>Enter invite link to queue bots for captcha solving. Each bot appears in grid — enter solution and click Solve.</p>
 <div class="row">
-<input type="text" id="inviteInput" placeholder="Invite link or code"/>
-<button class="btn-green" id="joinInviteBtn">Join All Bots</button>
+<input type="text" id="inviteInput" placeholder="discord.gg/xxxxxx"/>
+<button class="btn-green" id="joinInviteBtn">Add All Bots to Grid</button>
 </div>
 <div class="msg" id="verifyMsg"></div>
 </div>
-<div class="card"><h2>Pending Verifications <span id="pendingCount">0</span></h2><div class="verify-grid" id="verifyGrid"></div></div>
+<div class="card"><h2>Captcha Queue <span id="queueCount" style="color:#f43f5e;font-weight:700">0</span></h2><div class="verify-grid" id="verifyGrid"></div></div>
 <script>
-const verifyGrid=document.getElementById('verifyGrid'),verifyMsg=document.getElementById('verifyMsg'),pendingCount=document.getElementById('pendingCount');
-function render(list){pendingCount.textContent=list.length;verifyGrid.innerHTML=list.map(v=>'<div class="verify-card"><h3>#'+v.botIndex+'</h3><div class="type">'+v.type+'</div><div class="guild">'+v.guildName+'</div><textarea id="solve-'+v.botIndex+'" placeholder="Paste solution / captcha answer here"></textarea><button class="btn-green" onclick="solveVerify('+v.botIndex+')">Solve</button><button class="btn-red" onclick="skipVerify('+v.botIndex+')">Skip</button></div>').join('')}
-async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d.verifications||[])}catch(e){verifyMsg.textContent='Fetch failed'}}
+const verifyGrid=document.getElementById('verifyGrid'),verifyMsg=document.getElementById('verifyMsg'),queueCount=document.getElementById('queueCount');
+function renderAll(list){queueCount.textContent=list.length;if(list.length===0){verifyGrid.innerHTML='<div style="color:#94a3b8;padding:20px;text-align:center">No bots queued. Enter invite and click Add.</div>';return}
+verifyGrid.innerHTML=list.map(v=>'<div class="verify-card"><h3>#'+v.botIndex+'</h3><div class="bot-status">'+v.type+'</div><div class="guild">'+v.guildName+'</div><textarea id="solve-'+v.botIndex+'" placeholder="Paste captcha solution"></textarea><button class="btn-green" onclick="solveVerify('+v.botIndex+')">✔ Solve</button><button class="btn-red" onclick="skipVerify('+v.botIndex+')">✖ Skip</button></div>').join('')}
+async function fetchQueue(){try{const r=await fetch('/status');const d=await r.json();renderAll(d.verifications||[])}catch(e){}}
 document.getElementById('joinInviteBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){verifyMsg.textContent='Enter invite';return}
-verifyMsg.textContent='Joining...';const r=await fetch('/invite/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();verifyMsg.textContent=d.status||'Done';fetchStatus()}
-window.solveVerify=async(botIndex)=>{const txt=document.getElementById('solve-'+botIndex).value;if(!txt){verifyMsg.textContent='Enter solution';return}
-verifyMsg.textContent='Solving...';const r=await fetch('/verification/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(botIndex),solution:txt})});const d=await r.json();verifyMsg.textContent=d.status||'Done';fetchStatus()}
-window.skipVerify=async(botIndex)=>{const r=await fetch('/verification/skip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(botIndex)})});const d=await r.json();verifyMsg.textContent=d.status||'Done';fetchStatus()}
-fetchStatus();setInterval(fetchStatus,2000)
+verifyMsg.textContent='Adding...';const r=await fetch('/invite/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();verifyMsg.textContent='Added '+(d.results?d.results.filter(r=>r.success).length:0)+' bots';fetchQueue()}
+window.solveVerify=async(bi)=>{const txt=document.getElementById('solve-'+bi).value;if(!txt){verifyMsg.textContent='Enter solution';return}
+verifyMsg.textContent='Solving...';await fetch('/verification/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi),solution:txt})});verifyMsg.textContent='Solved Bot '+bi;fetchQueue()}
+window.skipVerify=async(bi)=>{await fetch('/verification/skip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi)})});verifyMsg.textContent='Skipped Bot '+bi;fetchQueue()}
+fetchQueue();setInterval(fetchQueue,3000)
 </script></body></html>`);
     return;
   }
 
+  // ================================================================
+  // MIC PAGE — SINGLE continuous POST stream to server
+  // Browser opens ONE POST request and keeps it open
+  // MediaRecorder writes chunks to this single request
+  // ================================================================
   if(req.url==='/mic'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
     res.end(`<!DOCTYPE html>
@@ -391,120 +386,133 @@ fetchStatus();setInterval(fetchStatus,2000)
 *{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}
 h1{margin:0 0 16px}p{margin:4px 0 16px;color:#9ca3af}button{font:inherit;cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700}
 .card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}
-.btn-green{background:#22c55e;color:#0f172a}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
+.btn-green{background:#22c55e;color:#0f172a}.btn-red{background:#ef4444;color:#fff}.btn-blue{background:#0ea5e9;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
 </style></head><body>
 <h1>🎤 Mic Routing</h1>
 <div class="card">
-<p>Route your microphone audio to all bots in voice channel.</p>
+<p>Your mic audio streams continuously through ONE connection to all bots.</p>
 <div class="row">
-<button class="btn-green" id="startMic">Start Mic</button>
-<button class="btn-red" id="stopMic">Stop Mic</button>
+<button class="btn-green" id="startMic">▶ Start Mic</button>
+<button class="btn-red" id="stopMic">⏹ Stop Mic</button>
 </div>
 <div class="msg" id="micMsg"></div>
 <div class="msg" id="micStatus"></div>
 </div>
 <script>
 const micMsg=document.getElementById('micMsg'),micStatus=document.getElementById('micStatus');
-let mediaRecorder=null;
-let mediaStream=null;
+let mediaRecorder=null;let mediaStream=null;let uploadReq=null;let uploadReader=null;
 document.getElementById('startMic').onclick=async()=>{
   try{
+    // Start mic routing on server
+    const startRes=await fetch('/mic/start',{method:'POST'});
+    if(!startRes.ok){micMsg.textContent='Server mic start failed';return}
+    
+    // Get user mic
     mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
     mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});
+    
+    // Open SINGLE continuous POST request
+    uploadReq=new XMLHttpRequest();
+    uploadReq.open('POST','/mic/upload',true);
+    uploadReq.setRequestHeader('Content-Type','audio/webm');
+    uploadReq.setRequestHeader('Transfer-Encoding','chunked');
+    
+    // Send each data chunk through the same open request
     mediaRecorder.ondataavailable=async(e)=>{
-      if(e.data.size>0){
-        await fetch('/mic/upload',{method:'POST',body:e.data,headers:{'Content-Type':'audio/webm'}});
+      if(e.data.size>0 && uploadReq.readyState===XMLHttpRequest.OPENED){
+        const reader=new FileReader();
+        reader.onload=()=>{
+          if(uploadReq.readyState===XMLHttpRequest.OPENED){
+            try{uploadReq.send(reader.result)}catch(ex){}
+          }
+        };
+        reader.readAsArrayBuffer(e.data);
       }
     };
+    
     mediaRecorder.start(1000);
-    micMsg.textContent='Mic streaming...';
-  }catch(e){micMsg.textContent='Mic error: '+e.message;}
+    micMsg.textContent='🔴 Mic streaming continuously...';
+  }catch(e){micMsg.textContent='❌ Error: '+e.message;}
 };
 document.getElementById('stopMic').onclick=async()=>{
   if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}
-  micMsg.textContent='Stopping...';await fetch('/mic/stop',{method:'POST'});micMsg.textContent='Stopped';
+  if(uploadReq){try{uploadReq.abort()}catch(e){}uploadReq=null;}
+  micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});
 };
-async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();micStatus.textContent='Mic active: '+(d.micActive?'Yes':'No')}catch(e){micStatus.textContent='Fetch failed'}}
+async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();micStatus.textContent='Mic: '+(d.micActive?'🔴 Active':'⏹ Stopped')}catch(e){}}
 fetchStatus();setInterval(fetchStatus,2000)
 </script></body></html>`);
     return;
   }
 
+  // ================================================================
+  // MIC START — spawn single persistent FFmpeg
+  // ================================================================
   if(req.url==='/mic/start'&&req.method==='POST'){
     startMicRouting();
-    res.writeHead(200);res.end(JSON.stringify({status:'mic started'}));
-    return;
+    res.writeHead(200);res.end(JSON.stringify({status:'mic started'}));return;
   }
 
+  // ================================================================
+  // MIC STOP — kill FFmpeg
+  // ================================================================
   if(req.url==='/mic/stop'&&req.method==='POST'){
     stopMicRouting();
-    res.writeHead(200);res.end(JSON.stringify({status:'mic stopped'}));
-    return;
+    res.writeHead(200);res.end(JSON.stringify({status:'mic stopped'}));return;
   }
 
+  // ================================================================
+  // MIC UPLOAD — continuous stream, pipe directly to FFmpeg stdin
+  // Browser sends continuous webm data through a single long-lived POST
+  // ================================================================
   if(req.url==='/mic/upload'&&req.method==='POST'){
-    // First call /mic/start to ensure FFmpeg is running
-    if(!micFfmpeg || !micFfmpeg.stdin || micFfmpeg.stdin.destroyed || !micActive){
-      startMicRouting();
+    if(!micActive){startMicRouting();}
+    if(micFfmpeg&&micFfmpeg.stdin&&!micFfmpeg.stdin.destroyed){
+      req.pipe(micFfmpeg.stdin);
     }
-    const chunks=[];
-    req.on('data',c=>chunks.push(c));
-    req.on('end',()=>{
-      const buf=Buffer.concat(chunks);
-      const audioStart=Math.max(buf.indexOf(0x1A45DFA3)>=0?buf.indexOf(0x1A45DFA3):0, buf.indexOf(0x00000000)>=0?0:0);
-      const data=buf.slice(audioStart);
-      if(data.length>0 && micFfmpeg && micFfmpeg.stdin && !micFfmpeg.stdin.destroyed){
-        try { micFfmpeg.stdin.write(data); } catch(e) {}
-      }
-      res.writeHead(200);res.end(JSON.stringify({status:'ok'}));
-    });
+    // Keep the request open, don't end it
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({status:'streaming'}));
     return;
   }
 
+  // ================================================================
+  // INVITE — queue ALL bots for verification
+  // ================================================================
   if(req.url==='/invite/join'&&req.method==='POST'){
-    try{const b=await parseJSONBody(req);const inviteCode=extractInviteCode(b.invite);
-    if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
-    const results=await Promise.all(bots.map(async(bot,i)=>{
-      if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};
-      try{
-        const invite=await bot.client.invites.fetch(inviteCode);
-        if(!invite.guild)return{bot:i+1,success:false,error:'No guild'};
-        // Add to queue - user can see which bots need manual verification in Discord
-        verificationQueue.push({botIndex:i+1,type:'Captcha/Verification',guildName:invite.guild.name});
-        bot.needsVerification=true;
-        bot.verificationType='Join Verification';
-        return{bot:i+1,success:true,invite:inviteCode,guild:invite.guild.name,needsVerification:true};
-      }catch(e){return{bot:i+1,success:false,error:e.message};}
-    }));
-    res.writeHead(200);res.end(JSON.stringify({status:'joining',results}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+    try{
+      const b=await parseJSONBody(req);
+      const inviteCode=extractInviteCode(b.invite);
+      if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
+      const results=bots.map((bot,i)=>{
+        if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};
+        verificationQueue.push({botIndex:i+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
+        bot.needsVerification=true;bot.verificationType='Captcha';
+        return{bot:i+1,success:true};
+      });
+      res.writeHead(200);res.end(JSON.stringify({status:'queued',results}));
+    }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
     return;
   }
 
   if(req.url==='/verification/solve'&&req.method==='POST'){
     try{const b=await parseJSONBody(req);const idx=b.botIndex-1;
     if(idx<0||idx>=bots.length){res.writeHead(400);res.end(JSON.stringify({error:'Invalid bot'}));return;}
-    const bot=bots[idx];
     const qi=verificationQueue.findIndex(v=>v.botIndex===b.botIndex);
     if(qi>=0)verificationQueue.splice(qi,1);
-    // Mark as solved - user has manually completed verification in Discord
-    bot.needsVerification=false;
-    bot.verificationType=null;
-    res.writeHead(200);res.end(JSON.stringify({status:'verification marked as solved - complete in Discord'}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
+    if(bots[idx]){bots[idx].needsVerification=false;bots[idx].verificationType=null;}
+    res.writeHead(200);res.end(JSON.stringify({status:'Bot '+b.botIndex+' solved'}));}
+    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
   if(req.url==='/verification/skip'&&req.method==='POST'){
     try{const b=await parseJSONBody(req);const idx=b.botIndex-1;
     if(idx<0||idx>=bots.length){res.writeHead(400);res.end(JSON.stringify({error:'Invalid bot'}));return;}
-    const bot=bots[idx];
     const qi=verificationQueue.findIndex(v=>v.botIndex===b.botIndex);
     if(qi>=0)verificationQueue.splice(qi,1);
-    bot.needsVerification=false;bot.verificationType=null;
-    res.writeHead(200);res.end(JSON.stringify({status:'skipped'}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
+    if(bots[idx]){bots[idx].needsVerification=false;bots[idx].verificationType=null;}
+    res.writeHead(200);res.end(JSON.stringify({status:'Bot '+b.botIndex+' skipped'}));}
+    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
   res.writeHead(404);res.end(JSON.stringify({error:'not found'}));
