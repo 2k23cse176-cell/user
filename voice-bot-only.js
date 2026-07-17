@@ -258,6 +258,11 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
   .verify-card button{margin-top:8px;width:100%}
 .btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}
 .btn-purple{background:#8b5cf6;color:#fff}.btn-gray{background:#475569;color:#fff}.btn-teal{background:#14b8a6;color:#0f172a}
+.status{margin-top:10px;white-space:pre-wrap;color:#cbd5e1;font-size:.95rem}
+.status.error{color:#fca5a5}
+.status.success{color:#86efac}
+.status.warn{color:#fde68a}
+.status.info{color:#bfdbfe}
 </style></head><body>
 <h1>🎧 Multi-Bot Controller</h1><p>${bots.length} bots</p>
 <div class="card"><h2>📡 Voice Channel</h2>
@@ -288,7 +293,15 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer. Use the extension-style login page below for extension token flow.</div>
 <div class="msg">This opens the extension login page hosted by the same server: <code>/extension-login</code>. It supports <code>?discordtoken=TOKEN</code> and pasted tokens.</div>
 <div class="msg">The new user DM page sends a direct message to a user ID from up to 10 ready bots.</div>
-<div class="bot-grid" id="botGrid"></div></div>
+<div class="bot-grid" id="botGrid"></div>
+<div class="card"><h2>✉️ Send User DM</h2>
+<input id="dmUserId" type="text" placeholder="Discord User ID" />
+<textarea id="dmMessage" placeholder="Message to send" rows="4"></textarea>
+<input id="dmCount" type="number" min="1" max="100" value="1" />
+<button class="btn-green" id="dmSendBtn">Send DM</button>
+<div class="msg" id="dmStatus">Waiting for bot status...</div>
+<div class="msg" id="dmResult"></div>
+</div></div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
 <button class="btn-green" id="startMic">▶ Start Mic</button>
@@ -304,10 +317,15 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <script>
 const vcMsg=document.getElementById('vcMsg'),audioMsg=document.getElementById('audioMsg'),botGrid=document.getElementById('botGrid'),botCount=document.getElementById('botCount'),playState=document.getElementById('playState');
 const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput');
+const dmUserIdInput=document.getElementById('dmUserId'),dmMessageInput=document.getElementById('dmMessage'),dmCountInput=document.getElementById('dmCount'),dmSendBtn=document.getElementById('dmSendBtn'),dmStatus=document.getElementById('dmStatus'),dmResult=document.getElementById('dmResult');
 const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
+let dmReadyCount = 0;
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
-botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
+const readyCount = d.bots.filter(b=>b.ready).length;
+botCount.textContent=readyCount+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
+ dmReadyCount = readyCount;
+ if(dmStatus){dmStatus.textContent = readyCount + ' ready bot(s) / ' + d.bots.length + ' total'; dmStatus.className = 'status ' + (readyCount ? 'success' : 'warn');}
   botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
 return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="copyToken('+b.index+')">Copy Token</button><button class="btn-teal" onclick="pasteTokenLogin('+b.index+')">Paste & Login</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
@@ -332,6 +350,34 @@ document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafeni
 document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
 function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
+async function sendUserDM(){
+  const userId = dmUserIdInput.value.trim();
+  const message = dmMessageInput.value.trim();
+  let count = Number(dmCountInput.value) || 1;
+  if(!userId){dmStatus.textContent='Enter a user ID.';dmStatus.className='status error';return;}
+  if(!message){dmStatus.textContent='Enter a message.';dmStatus.className='status error';return;}
+  if(count < 1) count = 1;
+  if(count > 100) count = 100;
+  if(dmReadyCount === 0){dmStatus.textContent='No ready bots available. Refresh status or wait.';dmStatus.className='status error';return;}
+  dmSendBtn.disabled=true;
+  dmSendBtn.textContent='Sending...';
+  dmStatus.textContent='Sending message...';dmStatus.className='status info';
+  dmResult.textContent='';
+  try{
+    const r = await fetch('/send-user-message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId,message,count})});
+    const d = await r.json();
+    if(r.ok){
+      dmStatus.textContent='Completed';dmStatus.className='status success';
+      dmResult.textContent='Sent to '+d.sentTo+' using '+d.usedBots+' bot(s) in '+d.totalMessages+' message(s).\n'+(d.results||[]).map(r=>r.botTag+': '+(r.success?'OK':r.error)).join('\n');
+    } else {
+      dmStatus.textContent='Error sending DM';dmStatus.className='status error';
+      dmResult.textContent='Error: '+(d.error||r.statusText);
+    }
+  }catch(e){dmStatus.textContent='Request failed';dmStatus.className='status error';dmResult.textContent='Failed: '+e.message;}
+  dmSendBtn.disabled=false;
+  dmSendBtn.textContent='Send DM';
+}
+dmSendBtn.onclick = sendUserDM;
 async function launchDiscord(idx){vcMsg.textContent='Launching Discord for bot '+idx+'...';const r=await fetch('/launch/'+idx,{method:'POST'});const d=await r.json();vcMsg.textContent=d.status||d.error;}
 async function copyToken(idx){try{vcMsg.textContent='Copying token...';const r=await fetch('/token/'+idx);if(!r.ok){vcMsg.textContent='Failed to get token';return}const j=await r.json();const tok=j.token;await navigator.clipboard.writeText(tok);vcMsg.textContent='Token copied to clipboard';}catch(e){vcMsg.textContent='Copy failed: '+e.message}}
 async function pasteTokenLogin(idx){
