@@ -6,8 +6,9 @@ const ffmpeg = require('ffmpeg-static');
 const puppeteer = require('puppeteer');
 const http = require('http');
 const fs = require('fs');
+try { require('dotenv').config(); console.log('📦 dotenv loaded'); } catch(e) { console.log('📦 dotenv not installed or failed to load'); }
 
-function parseList(v) { return (v||'').split(',').map(s=>s.trim()).filter(Boolean); }
+function parseList(v) { return (v||'').split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean); }
 function parseJSONBody(req) {
   return new Promise((resolve,reject)=>{let d='';req.on('data',c=>d+=c);req.on('end',()=>{try{resolve(d?JSON.parse(d):{})}catch(e){reject(e)}});req.on('error',reject);});
 }
@@ -38,12 +39,17 @@ async function startDiscordBackendLogin(token, id){
   }
 }
 
-const tokens = parseList(process.env.BOT_TOKENS||process.env.BOT_TOKEN||'');
+const rawTokens = process.env.BOT_TOKENS || process.env.BOT_TOKEN || process.env.REACT_APP_BOT_TOKENS || process.env.REACT_APP_BOT_TOKEN || process.env.VITE_BOT_TOKENS || process.env.VITE_BOT_TOKEN || '';
+const tokens = parseList(rawTokens);
 const autoJoin = (process.env.AUTO_JOIN||'false').toLowerCase()==='true';
 const channelIds = parseList(process.env.VOICE_CHANNEL_IDS||process.env.VOICE_CHANNEL_ID||process.env.CHANNEL_ID||'');
 const port = Number(process.env.PORT||3000);
 const keepAliveMs = Number(process.env.KEEPALIVE_MS||15000);
-if(!tokens.length){console.error('❌ Missing BOT_TOKEN');process.exit(1);}
+console.log(`🔑 Loaded ${tokens.length} token(s) from environment`);
+console.log(`🔎 Token source length: ${rawTokens.length}`);
+if(!tokens.length){
+  console.warn('⚠️ No BOT_TOKEN provided. Server will start, but bot features will be offline until tokens are configured.');
+}
 
 // ============================================================
 // STATE
