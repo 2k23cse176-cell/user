@@ -449,10 +449,8 @@ let botStatusInterval = null;
 async function loadBotStatus(){
   try{
     setStatus('Loading bot status...', 'info');
-    const controller = new AbortController();
-    const timeout = setTimeout(()=>controller.abort(), 10000);
-    const r = await fetch('/status', {signal: controller.signal});
-    clearTimeout(timeout);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Status fetch timeout')), 10000));
+    const r = await Promise.race([fetch('/status'), timeoutPromise]);
     if(!r.ok) throw new Error('Status fetch failed');
     const d = await r.json();
     const ready = d.bots.filter(b=>b.ready).length;
@@ -461,8 +459,8 @@ async function loadBotStatus(){
     if(!ready) setMsg('No ready bots available. Please wait for bots to come online.', 'warn');
     else setMsg('Ready to send DMs.', 'success');
   }catch(e){
-    const errText = e.name==='AbortError' ? 'Status fetch timed out' : e.message;
     latestReadyBots = 0;
+    const errText = e.message || 'Unknown error';
     setStatus('Could not load bot status', 'error');
     setMsg('Unable to fetch bot status: '+errText+' Click Refresh or wait a moment.', 'error');
   }
