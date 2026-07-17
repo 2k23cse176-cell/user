@@ -416,14 +416,19 @@ document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Ski
     if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid bot'}));return;}
     const bot = bots[idx];
     if(!bot.token){res.writeHead(400);res.end(JSON.stringify({error:'Bot token missing'}));return;}
-    try{
-      const browser = await puppeteer.launch({headless:false, args:['--no-sandbox','--disable-setuid-sandbox','--disable-infobars','--window-size=1280,800']});
-      const page = await browser.newPage();
-      await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
-      await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, bot.token);
-      await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
-      res.writeHead(200);res.end(JSON.stringify({status:'Discord launched for bot '+(idx+1)}));
-    }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+    // respond immediately and run Puppeteer in background to avoid blocking the client
+    res.writeHead(202);res.end(JSON.stringify({status:'Launch initiated'}));
+    (async ()=>{
+      try{
+        console.log('Launching Discord for bot', idx+1);
+        const browser = await puppeteer.launch({headless:false, args:['--no-sandbox','--disable-setuid-sandbox','--disable-infobars','--window-size=1280,800']});
+        const page = await browser.newPage();
+        await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
+        await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, bot.token);
+        await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
+        console.log('Launched Discord for bot', idx+1);
+      }catch(e){console.error('Launch failed for bot', idx+1, e.message);}    
+    })();
     return;
   }
 
