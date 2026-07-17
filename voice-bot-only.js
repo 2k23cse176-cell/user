@@ -272,7 +272,7 @@ let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
 botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
-return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-gray" onclick="openSession('+b.index+')">Session</button></div></div>'}).join('')}
+return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-gray" onclick="openSession('+b.index+')">Session</button></div></div>'}).join('')}
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
@@ -294,7 +294,7 @@ document.getElementById('deafBtn').onclick=()=>va('/audio/deafen','Deafening...'
 document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafening...')
 document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
-function openSession(idx){window.open('https://discord.com/channels/@me','_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
+function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -329,18 +329,17 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/status'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'application/json'});
-    res.end(JSON.stringify({isPlaying,globalVolume,bots:bots.map((b,i)=>({index:i+1,ready:b.status==='ready',connected:b.voiceState==='connected',voiceState:b.voiceState,channelId:b.channelId,guildId:b.guildId,lastError:b.lastError,needsVerification:b.needsVerification,verificationType:b.verificationType})),verifications:verificationQueue.map(v=>({botIndex:v.botIndex,type:v.type,guildName:v.guildName})),micActive}));
+    res.end(JSON.stringify({isPlaying,globalVolume,bots:bots.map((b,i)=>({index:i+1,tag:b.client.user?.tag||`Bot ${i+1}`,tokenMask:b.token?`${b.token.slice(0,6)}...${b.token.slice(-6)}`:'',ready:b.status==='ready',connected:b.voiceState==='connected',voiceState:b.voiceState,channelId:b.channelId,guildId:b.guildId,lastError:b.lastError,needsVerification:b.needsVerification,verificationType:b.verificationType})),verifications:verificationQueue.map(v=>({botIndex:v.botIndex,type:v.type,guildName:v.guildName})),micActive}));
     return;
   }
 
-  if(req.url==='/stay'&&req.method==='POST'){for(const b of bots){if(b.channelId&&b.guildId)b.joinChannel(b.channelId,b.guildId);}res.writeHead(200);res.end(JSON.stringify({status:'rejoining'}));return;}
+  if(req.url==='/stay'&&req.method==='POST'){bots.forEach((b)=>{if(b.channelId&&b.guildId)b.joinChannel(b.channelId,b.guildId).catch(()=>{});});res.writeHead(200);res.end(JSON.stringify({status:'rejoining'}));return;}
 
   if(req.url==='/join'&&req.method==='POST'){
     try{const b=await parseJSONBody(req);const ch=b.channelId||b.channel||null;const gu=b.guildId||b.guild||null;if(!ch){res.writeHead(400);res.end(JSON.stringify({error:'channelId required'}));return;}
-    const results=await Promise.all(bots.map(async(bot,i)=>{if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};const s=await bot.joinChannel(ch,gu);return{bot:i+1,success:s,connected:bot.voiceState==='connected',error:bot.lastError};}));
-    res.writeHead(200);res.end(JSON.stringify({status:'done',results}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
+    bots.forEach((bot)=>{if(bot.status==='ready'){bot.joinChannel(ch,gu).catch(()=>{});}});
+    res.writeHead(200);res.end(JSON.stringify({status:'started'}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
-
   const sessionMatch = req.url.match(/^\/session\/(\d+)(?:\/(invite|solve|skip))?$/);
   if(sessionMatch){
     const idx = Number(sessionMatch[1]) - 1;
@@ -355,7 +354,7 @@ fetchStatus();setInterval(fetchStatus,10000)
 <html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Bot Session ${idx+1}</title>
 <style>*{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}h1{margin:0 0 12px}p{margin:6px 0 12px;color:#cbd5e1}input,button,textarea{font:inherit}input[type="text"],textarea{width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px}button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700;margin-top:10px} .card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}.btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}</style></head><body>
 <h1>Bot Session ${idx+1}</h1>
-<div class="card"><p>Status: ${bot.status}</p><p>Voice state: ${bot.voiceState}</p><p>Channel: ${bot.channelId || 'N/A'}</p><p>Guild: ${bot.guildId || 'N/A'}</p><p>Verification: ${queued ? 'Needed' : (bot.needsVerification ? 'Needed' : 'OK')}</p><p>Queue target: ${queued ? queued.guildName : 'N/A'}</p></div>
+<div class="card"><p>Bot: ${bot.client.user?.tag || 'Unknown'}</p><p>Token: ${bot.token?bot.token.slice(0,6)+'...'+bot.token.slice(-6):'N/A'}</p><p>Status: ${bot.status}</p><p>Voice state: ${bot.voiceState}</p><p>Channel: ${bot.channelId || 'N/A'}</p><p>Guild: ${bot.guildId || 'N/A'}</p><p>Verification: ${queued ? 'Needed' : (bot.needsVerification ? 'Needed' : 'OK')}</p><p>Queue target: ${queued ? queued.guildName : 'N/A'}</p></div>
 <div class="card"><h2>Invite / Captcha</h2>
 <input id="inviteInput" type="text" placeholder="discord.gg/xxxxxx"/>
 <div class="row"><button class="btn-green" id="joinInviteBtn">Invite Bot</button></div>
