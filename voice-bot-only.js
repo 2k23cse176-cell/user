@@ -453,7 +453,7 @@ async function loadBotStatus(){
     const d = await r.json();
     const ready = d.bots.filter(b=>b.ready).length;
     latestReadyBots = ready;
-    setStatus(`${ready} ready bot(s) / ${d.bots.length} total`, ready? 'success' : 'warn');
+    setStatus(ready + ' ready bot(s) / ' + d.bots.length + ' total', ready ? 'success' : 'warn');
     if(!ready) setMsg('No ready bots available. Please wait for bots to come online.', 'warn');
     else setMsg('Ready to send DMs.', 'success');
   }catch(e){setStatus('Could not load bot status', 'error');setMsg('Unable to fetch bot status: '+e.message, 'error');}
