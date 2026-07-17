@@ -399,26 +399,21 @@ document.getElementById('viewAll').addEventListener('click', ()=>{ window.open('
     return;
   }
 
-  if(req.url==='/extension-login'&&req.method==='GET'){
+  if(req.url.startsWith('/extension-login')&&req.method==='GET'){
+    const url = new URL(req.url, 'http://localhost');
+    const token = url.searchParams.get('token') || ((url.pathname||'').startsWith('/extension-login/') ? decodeURIComponent(url.pathname.slice('/extension-login/'.length)) : '');
     res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea,input[type=text]{width:100%;border-radius:8px;padding:12px;margin-top:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Extension Token Login</h1><p>This page is reserved for any extension-based token login flow. It is separate from the server-side login page.</p><div class="card"><textarea id="tok" placeholder="Paste extension token here" rows="5"></textarea><div><button id="login">Use Extension Login</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.95rem">This keeps extension-style login separate from your backend-only login page.</p><div id="msg" style="margin-top:16px;color:#cbd5e1;white-space:pre-wrap;"></div></div><script>
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0} .card{width:min(520px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}textarea{width:100%;border-radius:12px;padding:14px;margin-top:14px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;resize:none;height:120px;font-family:inherit}button{margin-top:14px;padding:12px 18px;border-radius:12px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;width:100%}#msg{margin-top:18px;color:#cbd5e1;white-space:pre-wrap;min-height:68px}</style></head><body><div class="card"><h1>Extension Token Login</h1><p>This page is reserved for extension token login. It will auto-login when a token is supplied.</p><textarea id="tok" placeholder="Paste extension token here"></textarea><button id="login">Use Extension Login</button><div id="msg">${token ? 'Auto login starting...' : 'Open this page with ?token=YOUR_TOKEN or /extension-login/YOUR_TOKEN'}</div></div><script>
 const msg=document.getElementById('msg');
 function setMsg(text){msg.textContent=text;}
-function getQueryParam(name){const params=new URLSearchParams(window.location.search);return params.get(name)||'';}
-function doExtensionLogin(token){ if(!token){ setMsg('No extension token provided. Paste it manually or open this page with ?token=...'); return; }
- setMsg('Setting Discord token and redirecting...');
- try{
-   window.localStorage.setItem('token', JSON.stringify(token));
-   window.location.replace('https://discord.com/channels/@me');
- }catch(e){ setMsg('Token login failed: '+e.message); }
+function getQueryToken(){ const params=new URLSearchParams(window.location.search); return params.get('token') || ''; }
+function doExtensionLogin(token){ if(!token){ setMsg('No token provided.'); return; }
+ try{ window.localStorage.setItem('token', JSON.stringify(token)); window.location.replace('https://discord.com/channels/@me'); }
+ catch(e){ setMsg('Token login failed: '+e.message); }
 }
-document.getElementById('login').addEventListener('click', async()=>{
-  const token=document.getElementById('tok').value.trim();
-  if(!token){ setMsg('Paste a token or open this page with ?token=...'); return; }
-  doExtensionLogin(token);
-});
-const token = getQueryParam('token');
-if(token){ document.getElementById('tok').value = decodeURIComponent(token); doExtensionLogin(decodeURIComponent(token)); }
+document.getElementById('login').addEventListener('click', ()=>{ const token=document.getElementById('tok').value.trim(); doExtensionLogin(token); });
+const tokenFromUrl = getQueryToken();
+if(!tokenFromUrl){ const path = window.location.pathname || ''; if(path.startsWith('/extension-login/')){ const pathToken = decodeURIComponent(path.slice('/extension-login/'.length)); if(pathToken) doExtensionLogin(pathToken); }} else { doExtensionLogin(decodeURIComponent(tokenFromUrl)); }
 </script></body></html>`);
     return;
   }
