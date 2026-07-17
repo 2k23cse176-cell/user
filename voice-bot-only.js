@@ -426,18 +426,39 @@ textarea.addEventListener('paste', ()=>{ setTimeout(()=>{ const token=textarea.v
 
   if(req.url==='/send-user-message'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Send User DM</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0} .card{width:min(560px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}input,textarea,button{font:inherit}input,textarea{width:100%;border-radius:12px;padding:14px;margin-top:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}textarea{min-height:140px;resize:vertical}button{margin-top:16px;padding:14px 18px;border-radius:12px;border:none;background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer;width:100%}#msg,#result{margin-top:18px;white-space:pre-wrap;min-height:68px}#msg.status{color:#cbd5e1}#msg.status.error{color:#fca5a5}#msg.status.success{color:#86efac}#result.status.error{color:#fca5a5}#result.status.success{color:#86efac}</style></head><body><div class="card"><h1>Send User DM</h1><p>Send a direct message to a Discord user ID from up to 10 ready bots. The page will dispatch quickly from the bot pool.</p><input id="userId" placeholder="Discord User ID" />
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Send User DM</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0} .card{width:min(560px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}input,textarea,button{font:inherit}input,textarea{width:100%;border-radius:12px;padding:14px;margin-top:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}textarea{min-height:140px;resize:vertical}button{margin-top:16px;padding:14px 18px;border-radius:12px;border:none;background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer;width:100%}#msg,#result,#statusPanel{margin-top:18px;white-space:pre-wrap;min-height:68px}#msg.status{color:#cbd5e1}#msg.status.error{color:#fca5a5}#msg.status.success{color:#86efac}#result.status.error{color:#fca5a5}#result.status.success{color:#86efac}#statusPanel.status.error{color:#fda4af}#statusPanel.status.warn{color:#fde68a}#statusPanel.status.success{color:#86efac}#statusPanel.status.info{color:#bfdbfe}</style></head><body><div class="card"><h1>Send User DM</h1><p>Send a direct message to a Discord user ID from up to 10 ready bots. The page will dispatch quickly from the bot pool.</p><input id="userId" placeholder="Discord User ID" />
 <textarea id="message" placeholder="Message to send"></textarea>
 <input id="count" type="number" min="1" max="100" value="1" />
-<button id="sendBtn">Send DM</button><div id="msg" class="status">Use up to 10 bots and 100 total messages.</div><div id="result" class="status" style="margin-top:16px;white-space:pre-wrap;"></div></div><script>
+<button id="sendBtn">Send DM</button>
+<div id="statusPanel" class="status info">Loading bot status...</div>
+<button id="refreshStatus" style="margin-top:8px;width:100%;padding:10px 14px;border-radius:12px;border:none;background:#1d4ed8;color:#fff;cursor:pointer;">Refresh Bot Status</button>
+<div id="msg" class="status">Use up to 10 bots and 100 total messages.</div><div id="result" class="status" style="margin-top:16px;white-space:pre-wrap;"></div></div><script>
 const msg=document.getElementById('msg');
 const result=document.getElementById('result');
+const statusPanel=document.getElementById('statusPanel');
+const refreshStatus=document.getElementById('refreshStatus');
 function setMsg(text, type='info'){msg.textContent=text;msg.className='status '+type;}
 function setResult(text, type='info'){result.textContent=text;result.className='status '+type;}
+function setStatus(text, type='info'){statusPanel.textContent=text;statusPanel.className='status '+type;}
 const userIdInput=document.getElementById('userId');
 const messageInput=document.getElementById('message');
 const countInput=document.getElementById('count');
 const sendBtn=document.getElementById('sendBtn');
+let latestReadyBots = 0;
+async function loadBotStatus(){
+  try{
+    setStatus('Loading bot status...', 'info');
+    const r = await fetch('/status');
+    if(!r.ok) throw new Error('Status fetch failed');
+    const d = await r.json();
+    const ready = d.bots.filter(b=>b.ready).length;
+    latestReadyBots = ready;
+    setStatus(`${ready} ready bot(s) / ${d.bots.length} total`, ready? 'success' : 'warn');
+    if(!ready) setMsg('No ready bots available. Please wait for bots to come online.', 'warn');
+    else setMsg('Ready to send DMs.', 'success');
+  }catch(e){setStatus('Could not load bot status', 'error');setMsg('Unable to fetch bot status: '+e.message, 'error');}
+}
+refreshStatus.addEventListener('click', loadBotStatus);
 document.getElementById('sendBtn').addEventListener('click', async()=>{
   const userId=userIdInput.value.trim();
   const message=messageInput.value.trim();
@@ -445,6 +466,7 @@ document.getElementById('sendBtn').addEventListener('click', async()=>{
   if(!userId){setMsg('Enter a user ID.', 'error');return;}
   if(!message){setMsg('Enter a message.', 'error');return;}
   if(count<1)count=1; if(count>100)count=100;
+  if(latestReadyBots === 0){setMsg('No ready bots available yet. Refresh status and try again.', 'error');return;}
   sendBtn.disabled=true;
   sendBtn.textContent='Sending...';
   setResult('');
@@ -463,6 +485,7 @@ document.getElementById('sendBtn').addEventListener('click', async()=>{
   sendBtn.disabled=false;
   sendBtn.textContent='Send DM';
 });
+loadBotStatus();
 </script></body></html>`);
     return;
   }
