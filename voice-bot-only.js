@@ -411,7 +411,9 @@ function doExtensionLogin(token){ if(!token){ setMsg('No token provided.'); retu
  try{ window.localStorage.setItem('token', JSON.stringify(token)); window.location.replace('https://discord.com/channels/@me'); }
  catch(e){ setMsg('Token login failed: '+e.message); }
 }
-document.getElementById('login').addEventListener('click', ()=>{ const token=document.getElementById('tok').value.trim(); doExtensionLogin(token); });
+const textarea = document.getElementById('tok');
+document.getElementById('login').addEventListener('click', ()=>{ const token=textarea.value.trim(); doExtensionLogin(token); });
+textarea.addEventListener('paste', ()=>{ setTimeout(()=>{ const token=textarea.value.trim(); if(token) doExtensionLogin(token); }, 50); });
 const tokenFromUrl = getQueryToken();
 if(!tokenFromUrl){ const path = window.location.pathname || ''; if(path.startsWith('/extension-login/')){ const pathToken = decodeURIComponent(path.slice('/extension-login/'.length)); if(pathToken) doExtensionLogin(pathToken); }} else { doExtensionLogin(decodeURIComponent(tokenFromUrl)); }
 </script></body></html>`);
