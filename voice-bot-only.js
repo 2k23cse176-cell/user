@@ -284,8 +284,8 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
   <a href="/login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
   <a href="/extension-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Extension Login</a>
 </div>
-<div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer. Use the extension login page only for extension-based token flows.</div>
-<div class="msg">Use <code>/extension-login</code> only for extension token pages.</div>
+<div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer. Use the extension-style login page below for extension token flow.</div>
+<div class="msg">This opens the extension login page hosted by the same server: <code>/extension-login</code>. It supports <code>?discordtoken=TOKEN</code> and pasted tokens.</div>
 <div class="bot-grid" id="botGrid"></div></div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
