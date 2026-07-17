@@ -411,9 +411,9 @@ document.getElementById('startMic').onclick=async()=>{
   try{
     mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
     mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});
-    mediaRecorder.ondataavailable=async(e=>{
+    mediaRecorder.ondataavailable=async(e)=>{
       if(e.data.size>0){
-        await fetch('/mic/upload',{method:'POST',body:e.data});
+        await fetch('/mic/upload',{method:'POST',body:e.data,headers:{'Content-Type':'audio/webm'}});
       }
     };
     mediaRecorder.start(1000);
@@ -443,14 +443,21 @@ fetchStatus();setInterval(fetchStatus,2000)
   }
 
   if(req.url==='/mic/upload'&&req.method==='POST'){
-    if(!micFfmpeg || !micFfmpeg.stdin || micFfmpeg.stdin.destroyed){
-      res.writeHead(500);res.end(JSON.stringify({error:'Mic not started'}));return;
+    // First call /mic/start to ensure FFmpeg is running
+    if(!micFfmpeg || !micFfmpeg.stdin || micFfmpeg.stdin.destroyed || !micActive){
+      startMicRouting();
     }
-    req.on('data',c=>{
-      try { micFfmpeg.stdin.write(c); } catch(e) { console.error('Mic write error:', e.message); }
+    const chunks=[];
+    req.on('data',c=>chunks.push(c));
+    req.on('end',()=>{
+      const buf=Buffer.concat(chunks);
+      const audioStart=Math.max(buf.indexOf(0x1A45DFA3)>=0?buf.indexOf(0x1A45DFA3):0, buf.indexOf(0x00000000)>=0?0:0);
+      const data=buf.slice(audioStart);
+      if(data.length>0 && micFfmpeg && micFfmpeg.stdin && !micFfmpeg.stdin.destroyed){
+        try { micFfmpeg.stdin.write(data); } catch(e) {}
+      }
+      res.writeHead(200);res.end(JSON.stringify({status:'ok'}));
     });
-    req.on('end',()=>{res.writeHead(200);res.end(JSON.stringify({status:'ok'}));});
-    req.on('error',()=>{res.writeHead(500);res.end(JSON.stringify({error:'upload failed'}));});
     return;
   }
 
@@ -459,15 +466,15 @@ fetchStatus();setInterval(fetchStatus,2000)
     if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
     const results=await Promise.all(bots.map(async(bot,i)=>{
       if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};
-        try{
-          const invite=await bot.client.invites.fetch(inviteCode);
-          if(!invite.guild){return{bot:i+1,success:false,error:'No guild in invite'};}
-          // Always add to queue so user can manually complete verification
-          verificationQueue.push({botIndex:i+1,type:'Membership Screening',guildName:invite.guild.name});
-          bot.needsVerification=true;
-          bot.verificationType='Server Join';
-          return{bot:i+1,success:true,invite:inviteCode,guild:invite.guild.name,needsVerification:true};
-        }catch(e){return{bot:i+1,success:false,error:e.message};}
+      try{
+        const invite=await bot.client.invites.fetch(inviteCode);
+        if(!invite.guild)return{bot:i+1,success:false,error:'No guild'};
+        // Add to queue - user can see which bots need manual verification in Discord
+        verificationQueue.push({botIndex:i+1,type:'Captcha/Verification',guildName:invite.guild.name});
+        bot.needsVerification=true;
+        bot.verificationType='Join Verification';
+        return{bot:i+1,success:true,invite:inviteCode,guild:invite.guild.name,needsVerification:true};
+      }catch(e){return{bot:i+1,success:false,error:e.message};}
     }));
     res.writeHead(200);res.end(JSON.stringify({status:'joining',results}));}
     catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
