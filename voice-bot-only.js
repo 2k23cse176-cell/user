@@ -273,8 +273,8 @@ const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElemen
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
-botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
-return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="launchDiscord('+b.index+')">Open Discord</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
+  botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
+return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="copyToken('+b.index+')">Copy Token</button><button class="btn-teal" onclick="openSession('+b.index+')">Paste Token Login</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
@@ -298,6 +298,7 @@ document.getElementById('startMic').onclick=async()=>{try{const startRes=await f
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
 function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
 async function launchDiscord(idx){vcMsg.textContent='Launching Discord for bot '+idx+'...';const r=await fetch('/launch/'+idx,{method:'POST'});const d=await r.json();vcMsg.textContent=d.status||d.error;}
+async function copyToken(idx){try{vcMsg.textContent='Copying token...';const r=await fetch('/token/'+idx);if(!r.ok){vcMsg.textContent='Failed to get token';return}const j=await r.json();const tok=j.token;await navigator.clipboard.writeText(tok);vcMsg.textContent='Token copied to clipboard';}catch(e){vcMsg.textContent='Copy failed: '+e.message}}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -346,6 +347,18 @@ fetchStatus();setInterval(fetchStatus,10000)
       res.writeHead(200,{'Content-Type':'image/png'});
       res.end(img);
     }else{res.writeHead(404);res.end('No screenshot');}
+    return;
+  }
+
+  // Return full token for a given session index (use carefully)
+  const tokenMatch = req.url.match(/^\/token\/(\d+)$/);
+  if(tokenMatch && req.method==='GET'){
+    const si = Number(tokenMatch[1]) - 1;
+    if(si < 0 || si >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
+    const t = bots[si].token || null;
+    if(!t){res.writeHead(404);res.end(JSON.stringify({error:'No token'}));return;}
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({token:t}));
     return;
   }
 
