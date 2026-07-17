@@ -39,7 +39,7 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_HEADLESS=true
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --production --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
 
