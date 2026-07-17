@@ -306,6 +306,13 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/health'&&req.method==='GET'){res.writeHead(200);res.end(JSON.stringify({status:'ok',bots:bots.length}));return;}
 
+  // Local-login page: client-side only. Paste token here in your browser to log into Discord locally.
+  if(req.url==='/local-login'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea{width:100%;height:90px;border-radius:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Local Discord Token Login</h1><p>Paste your token below. This page runs only in your browser and <strong>does not send the token to the server</strong>. It will store the token in your browser's localStorage and redirect you to Discord.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)."></textarea><div><button id="login">Login to Discord Locally</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.9rem">Warning: Do not paste tokens on untrusted machines. This will log you into Discord as that account in this browser.</p></div><script>document.getElementById('login').addEventListener('click',()=>{const t=document.getElementById('tok').value.trim();if(!t){alert('Enter a token');return}try{localStorage.setItem('token',JSON.stringify(t));location.href='https://discord.com/channels/@me'}catch(e){alert('Failed: '+e.message)}})</script></body></html>`);
+    return;
+  }
+
   if(req.url==='/audio/upload'&&req.method==='POST'){
     const ws=fs.createWriteStream('./shared_audio.mp3');
     req.pipe(ws);ws.on('finish',()=>{res.writeHead(200);res.end(JSON.stringify({status:'uploaded'}));});
