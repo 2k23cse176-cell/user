@@ -270,10 +270,9 @@ const guildInput=document.getElementById('guildInput'),channelInput=document.get
 const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
-window.botTokens=d.bots.map(b=>b.tokenFull||'');
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
 botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
-return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="openDiscord('+b.index+')">Login Discord</button><button class="btn-teal" onclick="copyToken('+b.index+')">Copy Token</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
+return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="openDiscord('+b.index+')">Open Discord</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
@@ -296,8 +295,7 @@ document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafeni
 document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
 function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
-function openDiscord(idx){window.open('/login/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
-function copyToken(idx){const token = window.botTokens[idx-1]||'';if(!token){vcMsg.textContent='No token available';return;}navigator.clipboard.writeText(token).then(()=>{vcMsg.textContent='Token copied';}).catch(()=>{vcMsg.textContent='Copy failed';})}
+function openDiscord(idx){window.open('https://discord.com/channels/@me','_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -411,17 +409,7 @@ document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Ski
   }
 
   const loginMatch = req.url.match(/^\/login\/(\d+)$/);
-  if(loginMatch && req.method==='GET'){
-    const idx = Number(loginMatch[1]) - 1;
-    if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end('Invalid bot');return;}
-    const bot = bots[idx];
-    const token = bot.token || '';
-    res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Login Bot ${idx+1}</title><style>body{background:#0b1220;color:#e2e8eb;font-family:system-ui,sans-serif;margin:0;padding:24px}h1{margin:0 0 16px}p,code{margin:8px 0;display:block}code{background:#172c44;padding:12px;border-radius:12px;word-break:break-all}button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700;margin-top:16px;background:#0ea5e9;color:#fff} .note{margin-top:16px;color:#94a3b8;font-size:.95rem;}</style></head><body><h1>Login Bot ${idx+1}</h1><p>Copy the token below and paste it into Discord login if automatic login does not complete.</p><code id="tokenBox">${token}</code><button id="copyBtn">Copy Token</button><p class="note">This page also opens Discord in a new tab and attempts to log in via token. If it fails, paste the token manually into a Discord selfbot login helper.</p><script>const token=${JSON.stringify(token)};const copyBtn=document.getElementById('copyBtn');copyBtn.onclick=async()=>{try{await navigator.clipboard.writeText(token);copyBtn.textContent='Copied';}catch(e){copyBtn.textContent='Copy failed';}};window.open('https://discord.com/channels/@me','_blank');</script></body></html>`);
-    return;
-  }
-
-  if(req.url==='/leave'&&req.method==='POST'){for(const b of bots)b.leaveChannel();res.writeHead(200);res.end(JSON.stringify({status:'left'}));return;}
+if(req.url==='/leave'&&req.method==='POST'){for(const b of bots)b.leaveChannel();res.writeHead(200);res.end(JSON.stringify({status:'left'}));return;}
 
   // ================================================================
   // MIC PAGE — SINGLE continuous POST stream to server
