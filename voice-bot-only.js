@@ -445,6 +445,7 @@ const messageInput=document.getElementById('message');
 const countInput=document.getElementById('count');
 const sendBtn=document.getElementById('sendBtn');
 let latestReadyBots = 0;
+let botStatusInterval = null;
 async function loadBotStatus(){
   try{
     setStatus('Loading bot status...', 'info');
@@ -461,11 +462,16 @@ async function loadBotStatus(){
     else setMsg('Ready to send DMs.', 'success');
   }catch(e){
     const errText = e.name==='AbortError' ? 'Status fetch timed out' : e.message;
+    latestReadyBots = 0;
     setStatus('Could not load bot status', 'error');
-    setMsg('Unable to fetch bot status: '+errText, 'error');
+    setMsg('Unable to fetch bot status: '+errText+' Click Refresh or wait a moment.', 'error');
   }
 }
-refreshStatus.addEventListener('click', loadBotStatus);
+function startStatusAutoRefresh(){
+  if(botStatusInterval) clearInterval(botStatusInterval);
+  botStatusInterval = setInterval(loadBotStatus, 15000);
+}
+refreshStatus.addEventListener('click', ()=>{loadBotStatus();});
 document.getElementById('sendBtn').addEventListener('click', async()=>{
   const userId=userIdInput.value.trim();
   const message=messageInput.value.trim();
@@ -493,6 +499,7 @@ document.getElementById('sendBtn').addEventListener('click', async()=>{
   sendBtn.textContent='Send DM';
 });
 loadBotStatus();
+startStatusAutoRefresh();
 </script></body></html>`);
     return;
   }
