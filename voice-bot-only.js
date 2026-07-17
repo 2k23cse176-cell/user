@@ -281,7 +281,7 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div class="msg" id="audioMsg"></div></div>
 <div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2>
 <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
-  <a href="/local-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
+  <a href="/login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
 </div>
 <div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer.</div>
 <div class="bot-grid" id="botGrid"></div></div>
@@ -363,9 +363,37 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/health'&&req.method==='GET'){res.writeHead(200);res.end(JSON.stringify({status:'ok',bots:bots.length}));return;}
 
-  if(req.url==='/local-login'&&req.method==='GET'){
+  if(req.url==='/login'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Server Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea{width:100%;height:90px;border-radius:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Server Discord Token Login</h1><p>Paste your token below. The server will log in using Puppeteer and handle Discord locally on the backend.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)."></textarea><div><button id="login">Login on Server</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.9rem">No browser extension needed. The login happens on the backend.</p><div id="msg" style="margin-top:12px;color:#cbd5e1;"></div></div><script>document.getElementById('login').addEventListener('click',async()=>{const t=document.getElementById('tok').value.trim();if(!t){alert('Enter a token');return}const msg=document.getElementById('msg');msg.textContent='Starting login...';try{const r=await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})});const d=await r.json();if(r.ok){msg.innerHTML='Login started, session id: '+d.id+'<br><a href="/login/discord/'+d.id+'">Check status</a>';}else{msg.textContent='Error: '+(d.error||r.statusText);} }catch(e){msg.textContent='Failed: '+e.message;}});</script></body></html>`);
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Server Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea,input[type=text]{width:100%;border-radius:8px;padding:12px;margin-top:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}button.secondary{background:#2563eb}button.outline{background:transparent;border:1px solid #475569;color:#e5e7eb}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{padding:10px;border:1px solid #1f2937;text-align:left;font-size:.9rem}th{background:#111827}</style></head><body><h1>Server Discord Token Login</h1><p>Paste your token below and the backend will log in to Discord using Puppeteer. No browser extension is needed.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)" rows="5"></textarea><div><button id="login">Login on Server</button><button class="secondary" id="clipboard">Use Clipboard</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.95rem">After login starts, you will receive a session ID you can refresh or inspect.</p><div style="margin-top:12px"><input id="sessionId" type="text" placeholder="Enter session id to refresh" /><button class="outline" id="check">Refresh Status</button><button class="outline" id="viewAll">Open Session List</button></div><div id="msg" style="margin-top:16px;color:#cbd5e1;white-space:pre-wrap;"></div></div><script>
+const msg=document.getElementById('msg');
+function setMsg(text){msg.textContent=text;}
+async function getClipboardText(){ try{ return (await navigator.clipboard.readText()).trim(); }catch(e){ return ''; } }
+document.getElementById('clipboard').addEventListener('click', async()=>{ const text=await getClipboardText(); if(!text){ setMsg('Clipboard empty or inaccessible.'); return; } document.getElementById('tok').value=text; setMsg('Token loaded from clipboard.'); });
+document.getElementById('login').addEventListener('click', async()=>{
+  const t=document.getElementById('tok').value.trim();
+  if(!t){ setMsg('Enter a token first.'); return; }
+  setMsg('Starting backend login...');
+  try{
+    const r=await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})});
+    const d=await r.json();
+    if(r.ok){ setMsg('Login started. Session id: '+d.id+'\nUse the Refresh Status button below or open the session list.'); document.getElementById('sessionId').value=d.id; }
+    else{ setMsg('Error: '+(d.error||r.statusText)); }
+  }catch(e){ setMsg('Failed: '+e.message); }
+});
+document.getElementById('check').addEventListener('click', async()=>{
+  const id=document.getElementById('sessionId').value.trim();
+  if(!id){ setMsg('Enter a session id to refresh.'); return; }
+  setMsg('Refreshing session status...');
+  try{
+    const r=await fetch('/login/discord/'+encodeURIComponent(id));
+    const d=await r.json();
+    if(r.ok){ setMsg(JSON.stringify(d, null, 2)); }
+    else{ setMsg('Error: '+(d.error||r.statusText)); }
+  }catch(e){ setMsg('Failed: '+e.message); }
+});
+document.getElementById('viewAll').addEventListener('click', ()=>{ window.open('/login/sessions','_blank'); });
+</script></body></html>`);
     return;
   }
 
@@ -402,6 +430,13 @@ fetchStatus();setInterval(fetchStatus,10000)
       res.writeHead(200,{'Content-Type':'image/png'});
       res.end(img);
     } else { res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'no screenshot'})); }
+    return;
+  }
+
+  if(req.url==='/login/sessions'&&req.method==='GET'){
+    const rows = Object.entries(loginSessions).map(([id,session])=>`<tr><td>${id}</td><td>${session.status}</td><td>${session.startedAt?new Date(session.startedAt).toLocaleString():'-'}</td><td>${session.url?`<a href="${session.url}" target="_blank">open</a>`:'-'}</td><td>${session.screenshot?`<a href="${session.screenshot}" target="_blank">screenshot</a>`:'-'}</td><td>${session.error||''}</td></tr>`).join('');
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login Sessions</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:12px;border:1px solid #1f2937;text-align:left;font-size:.9rem}th{background:#111827}a{color:#38bdf8;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h1>Backend Login Sessions</h1><p>Refresh this page to see updated session status for token login attempts.</p><table><thead><tr><th>Session ID</th><th>Status</th><th>Started</th><th>Discord URL</th><th>Screenshot</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
     return;
   }
 
