@@ -402,27 +402,23 @@ document.getElementById('viewAll').addEventListener('click', ()=>{ window.open('
   if(req.url==='/extension-login'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
     res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea,input[type=text]{width:100%;border-radius:8px;padding:12px;margin-top:10px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Extension Token Login</h1><p>This page is reserved for any extension-based token login flow. It is separate from the server-side login page.</p><div class="card"><textarea id="tok" placeholder="Paste extension token here" rows="5"></textarea><div><button id="login">Use Extension Login</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.95rem">This keeps extension-style login separate from your backend-only login page.</p><div id="msg" style="margin-top:16px;color:#cbd5e1;white-space:pre-wrap;"></div></div><script>
-const msg = document.getElementById('msg');
+const msg=document.getElementById('msg');
 function setMsg(text){msg.textContent=text;}
 function getQueryParam(name){const params=new URLSearchParams(window.location.search);return params.get(name)||'';}
-async function startExtensionLogin(token){ if(!token){ setMsg('No extension token provided. Paste it manually or open this page with ?token=...'); return; }
- setMsg('Auto login starting...');
+function doExtensionLogin(token){ if(!token){ setMsg('No extension token provided. Paste it manually or open this page with ?token=...'); return; }
+ setMsg('Setting Discord token and redirecting...');
  try{
-   const r = await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
-   const d = await r.json();
-   if(r.ok){ setMsg('Login started automatically. Session id: '+d.id); }
-   else{ setMsg('Auto login failed: '+(d.error||r.statusText)); }
- }catch(e){ setMsg('Auto login error: '+e.message); }
+   window.localStorage.setItem('token', JSON.stringify(token));
+   window.location.replace('https://discord.com/channels/@me');
+ }catch(e){ setMsg('Token login failed: '+e.message); }
 }
-
 document.getElementById('login').addEventListener('click', async()=>{
   const token=document.getElementById('tok').value.trim();
   if(!token){ setMsg('Paste a token or open this page with ?token=...'); return; }
-  await startExtensionLogin(token);
+  doExtensionLogin(token);
 });
-
 const token = getQueryParam('token');
-if(token){ document.getElementById('tok').value = decodeURIComponent(token); startExtensionLogin(decodeURIComponent(token)); }
+if(token){ document.getElementById('tok').value = decodeURIComponent(token); doExtensionLogin(decodeURIComponent(token)); }
 </script></body></html>`);
     return;
   }
