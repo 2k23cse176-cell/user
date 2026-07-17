@@ -161,7 +161,7 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
     rp=new Promise((res,rej)=>{const o=()=>{c();res();},e=(er)=>{c();rej(er);},c=()=>{client.off('ready',o);client.off('error',e);};client.once('ready',o);client.once('error',e);});return rp;
   };
   const bot={
-    client,token,channelId:null,guildId:null,voiceConnection:null,status:'offline',voiceState:'disconnected',lastError:null,needsVerification:false,verificationType:null,
+    client, token,channelId:null,guildId:null,voiceConnection:null,status:'offline',voiceState:'disconnected',lastError:null,needsVerification:false,verificationType:null,
     async joinChannel(tch,tgu){
       if(!tch)return false;
       if(rt){clearTimeout(rt);rt=null;}
@@ -401,14 +401,14 @@ document.getElementById('viewAll').addEventListener('click', ()=>{ window.open('
 
   if(req.url.startsWith('/extension-login')&&req.method==='GET'){
     const url = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token') || ((url.pathname||'').startsWith('/extension-login/') ? decodeURIComponent(url.pathname.slice('/extension-login/'.length)) : '');
+    const token = url.searchParams.get('discordtoken') || url.searchParams.get('token') || ((url.pathname||'').startsWith('/extension-login/') ? decodeURIComponent(url.pathname.slice('/extension-login/'.length)) : '');
     res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0} .card{width:min(520px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}textarea{width:100%;border-radius:12px;padding:14px;margin-top:14px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;resize:none;height:120px;font-family:inherit}button{margin-top:14px;padding:12px 18px;border-radius:12px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;width:100%}#msg{margin-top:18px;color:#cbd5e1;white-space:pre-wrap;min-height:68px}</style></head><body><div class="card"><h1>Extension Token Login</h1><p>This page is reserved for extension token login. It will auto-login when a token is supplied.</p><textarea id="tok" placeholder="Paste extension token here"></textarea><button id="login">Use Extension Login</button><div id="msg">${token ? 'Auto login starting...' : 'Open this page with ?token=YOUR_TOKEN or /extension-login/YOUR_TOKEN'}</div></div><script>
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Extension Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0} .card{width:min(520px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}textarea{width:100%;border-radius:12px;padding:14px;margin-top:14px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;resize:none;height:120px;font-family:inherit}button{margin-top:14px;padding:12px 18px;border-radius:12px;border:none;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;width:100%}#msg{margin-top:18px;color:#cbd5e1;white-space:pre-wrap;min-height:68px}</style></head><body><div class="card"><h1>Extension Token Login</h1><p>This page is reserved for extension token login. It will auto-login when a token is supplied.</p><textarea id="tok" placeholder="Paste extension token here"></textarea><button id="login">Use Extension Login</button><div id="msg">${token ? 'Auto login starting...' : 'Open this page with ?discordtoken=YOUR_TOKEN or /extension-login/YOUR_TOKEN'}</div></div><script>
 const msg=document.getElementById('msg');
 function setMsg(text){msg.textContent=text;}
-function getQueryToken(){ const params=new URLSearchParams(window.location.search); return params.get('token') || ''; }
+function getQueryToken(){ const params=new URLSearchParams(window.location.search); return params.get('discordtoken') || params.get('token') || ''; }
 function doExtensionLogin(token){ if(!token){ setMsg('No token provided.'); return; }
- try{ window.localStorage.setItem('token', JSON.stringify(token)); window.location.replace('https://discord.com/channels/@me'); }
+ try{ window.localStorage.clear(); window.localStorage.setItem('token', JSON.stringify(token)); window.location.replace('https://discord.com/channels/@me'); }
  catch(e){ setMsg('Token login failed: '+e.message); }
 }
 const textarea = document.getElementById('tok');
