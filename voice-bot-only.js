@@ -283,9 +283,11 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
   <a href="/login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
   <a href="/extension-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Extension Login</a>
+  <a href="/send-user-message" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Send User DM</a>
 </div>
 <div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer. Use the extension-style login page below for extension token flow.</div>
 <div class="msg">This opens the extension login page hosted by the same server: <code>/extension-login</code>. It supports <code>?discordtoken=TOKEN</code> and pasted tokens.</div>
+<div class="msg">The new user DM page sends a direct message to a user ID from up to 10 ready bots.</div>
 <div class="bot-grid" id="botGrid"></div></div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
@@ -414,11 +416,73 @@ const msg=document.getElementById('msg');
 function setMsg(text){msg.textContent=text;}
 const textarea=document.getElementById('tok');
 function redirectWithToken(token){ if(!token){ setMsg('Paste a token to login.'); return; }
- window.location.replace(`https://discord.com?discordtoken=${encodeURIComponent(token)}`);
+ window.location.replace('https://discord.com?discordtoken=' + encodeURIComponent(token));
 }
 document.getElementById('login').addEventListener('click', ()=>{ const token=textarea.value.trim(); redirectWithToken(token); });
 textarea.addEventListener('paste', ()=>{ setTimeout(()=>{ const token=textarea.value.trim(); if(token) redirectWithToken(token); }, 100); });
 </script></body></html>`);
+    return;
+  }
+
+  if(req.url==='/send-user-message'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Send User DM</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0} .card{width:min(560px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}input,textarea,button{font:inherit}input,textarea{width:100%;border-radius:12px;padding:14px;margin-top:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}textarea{min-height:140px;resize:vertical}button{margin-top:16px;padding:14px 18px;border-radius:12px;border:none;background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer;width:100%}#msg{margin-top:18px;color:#cbd5e1;white-space:pre-wrap;min-height:68px}</style></head><body><div class="card"><h1>Send User DM</h1><p>Send a direct message to a Discord user ID from up to 10 ready bots. The page will dispatch quickly from the bot pool.</p><input id="userId" placeholder="Discord User ID" />
+<textarea id="message" placeholder="Message to send"></textarea>
+<input id="count" type="number" min="1" max="100" value="1" />
+<button id="sendBtn">Send DM</button><div id="msg">Use up to 10 bots and 100 total messages.</div></div><script>
+const msg=document.getElementById('msg');
+function setMsg(text){msg.textContent=text;}
+const userIdInput=document.getElementById('userId');
+const messageInput=document.getElementById('message');
+const countInput=document.getElementById('count');
+document.getElementById('sendBtn').addEventListener('click', async()=>{
+  const userId=userIdInput.value.trim();
+  const message=messageInput.value.trim();
+  let count=Number(countInput.value)||1;
+  if(!userId){setMsg('Enter a user ID.');return;}
+  if(!message){setMsg('Enter a message.');return;}
+  if(count<1)count=1; if(count>100)count=100;
+  setMsg('Sending message...');
+  try{
+    const r = await fetch('/send-user-message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId,message,count})});
+    const d = await r.json();
+    if(r.ok){setMsg('Sent to '+d.sentTo+' using '+d.usedBots+' bot(s) in '+d.totalMessages+' message(s).\n'+(d.results||[]).map(r=>r.botTag+': '+(r.success?'OK':r.error)).join('\n'));}
+    else{setMsg('Error: '+(d.error||r.statusText));}
+  }catch(e){setMsg('Failed: '+e.message);}
+});
+</script></body></html>`);
+    return;
+  }
+
+  if(req.url==='/send-user-message'&&req.method==='POST'){
+    try{
+      const b = await parseJSONBody(req);
+      const userId = (b.userId||'').trim();
+      const message = (b.message||'').trim();
+      let count = Number(b.count) || 1;
+      if(!userId || !message){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'userId and message required'}));return;}
+      if(count < 1) count = 1;
+      if(count > 100) count = 100;
+      const activeBots = bots.filter(bot=>bot.status==='ready').slice(0, 10);
+      if(!activeBots.length){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'No ready bots available'}));return;}
+      const messagesPerBot = Math.ceil(count / activeBots.length);
+      const tasks = [];
+      for(const [idx, bot] of activeBots.entries()){
+        const tag = bot.client.user?.tag || `Bot ${idx+1}`;
+        for(let i=0;i<messagesPerBot && tasks.length < count;i++){
+          tasks.push((async()=>{
+            try{
+              const user = await bot.client.users.fetch(userId, {force:true});
+              await user.send(message);
+              return {botTag: tag, success: true};
+            }catch(err){return {botTag: tag, success: false, error: err?.message || String(err)};}
+          })());
+        }
+      }
+      const results = await Promise.all(tasks);
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({sentTo:userId, totalMessages: results.length, usedBots: activeBots.length, results}));
+    }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
     return;
   }
 
