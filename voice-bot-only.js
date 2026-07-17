@@ -159,6 +159,10 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
         vc.on('stateChange',(o,n)=>{
           if(n.status===VoiceConnectionStatus.Disconnected||n.status===VoiceConnectionStatus.Destroyed){
             bot.voiceState='disconnected';
+            if(kt){clearInterval(kt);kt=null;}
+            if(vc){try{vc.destroy();}catch(e){}} 
+            vc=null;
+            bot.voiceConnection=null;
             const j=Math.floor(Math.random()*5000)+3000;
             rt=setTimeout(()=>{if(bot.channelId&&bot.guildId)bot.joinChannel(bot.channelId,bot.guildId).catch(()=>{});},j);
           }
@@ -317,7 +321,7 @@ fetchStatus();setInterval(fetchStatus,10000)
     catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
-  const updateVS=(mute,deaf)=>{globalMute=mute;globalDeaf=deaf;for(const b of bots){if(b.channelId&&b.guildId&&b.voiceState==='connected'&&b.voiceConnection){try{const g=b.client.guilds.cache.get(b.guildId);if(g){const vc=joinVoiceChannel({channelId:b.channelId,guildId:b.guildId,adapterCreator:g.voiceAdapterCreator,group:b.client.user.id,selfDeaf:globalDeaf,selfMute:globalMute});b.voiceConnection=vc;vc.subscribe(globalPlayer);}}catch(e){}}}};
+  const updateVS=(mute,deaf)=>{globalMute=mute;globalDeaf=deaf;for(const b of bots){if(b.channelId&&b.guildId&&b.voiceState==='connected'&&b.voiceConnection){try{const g=b.client.guilds.cache.get(b.guildId);if(g){const currentVc=b.voiceConnection; if(currentVc){try{currentVc.destroy();}catch(e){}} const vc=joinVoiceChannel({channelId:b.channelId,guildId:b.guildId,adapterCreator:g.voiceAdapterCreator,group:b.client.user.id,selfDeaf:globalDeaf,selfMute:globalMute});b.voiceConnection=vc;vc.subscribe(globalPlayer);}}catch(e){console.error('UpdateVS failed',e.message);}}}};
   if(req.url==='/audio/mute'&&req.method==='POST'){updateVS(true,globalDeaf);res.writeHead(200);res.end(JSON.stringify({status:'muted'}));return;}
   if(req.url==='/audio/unmute'&&req.method==='POST'){updateVS(false,globalDeaf);res.writeHead(200);res.end(JSON.stringify({status:'unmuted'}));return;}
   if(req.url==='/audio/deafen'&&req.method==='POST'){updateVS(globalMute,true);res.writeHead(200);res.end(JSON.stringify({status:'deafened'}));return;}
