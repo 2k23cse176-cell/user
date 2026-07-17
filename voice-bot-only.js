@@ -12,6 +12,32 @@ function parseJSONBody(req) {
   return new Promise((resolve,reject)=>{let d='';req.on('data',c=>d+=c);req.on('end',()=>{try{resolve(d?JSON.parse(d):{})}catch(e){reject(e)}});req.on('error',reject);});
 }
 
+const loginSessions = {};
+async function startDiscordBackendLogin(token, id){
+  loginSessions[id] = {status:'starting',startedAt:Date.now()};
+  try{
+    const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+    const headless = (process.env.PUPPETEER_HEADLESS||'true') === 'true';
+    const browser = await puppeteer.launch({headless, executablePath: execPath, args:['--no-sandbox','--disable-setuid-sandbox','--disable-infobars','--window-size=1280,800']});
+    const page = await browser.newPage();
+    await page.goto('https://discord.com/login', {waitUntil:'domcontentloaded', timeout:60000});
+    await page.evaluate((t)=>{window.localStorage.setItem('token', JSON.stringify(t));}, token);
+    await page.goto('https://discord.com/channels/@me', {waitUntil:'networkidle2', timeout:60000});
+    const sessDir = './sessions';
+    fs.mkdirSync(sessDir,{recursive:true});
+    const shotPath = `${sessDir}/backend-${id}.png`;
+    await page.screenshot({path:shotPath, fullPage:true});
+    loginSessions[id].status='done';
+    loginSessions[id].screenshot=`/login/discord/${id}/screenshot`;
+    loginSessions[id].url='https://discord.com/channels/@me';
+    await browser.close();
+  }catch(e){
+    loginSessions[id].status='error';
+    loginSessions[id].error=e.message || String(e);
+    console.error('Backend Discord login failed',e);
+  }
+}
+
 const tokens = parseList(process.env.BOT_TOKENS||process.env.BOT_TOKEN||'');
 const autoJoin = (process.env.AUTO_JOIN||'false').toLowerCase()==='true';
 const channelIds = parseList(process.env.VOICE_CHANNEL_IDS||process.env.VOICE_CHANNEL_ID||process.env.CHANNEL_ID||'');
@@ -255,15 +281,10 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div class="msg" id="audioMsg"></div></div>
 <div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2>
 <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
-  <a href="/local-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Local Login</a>
-  <button class="btn-teal" id="pasteAllBtn">Paste & Login All</button>
+  <a href="/local-login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
 </div>
+<div class="msg">Paste your Discord token on the server-side login page. The backend will perform the login using Puppeteer.</div>
 <div class="bot-grid" id="botGrid"></div></div>
-<div class="card"><h2>🛠 Discord App Prompt</h2>
-<p>If Discord shows “Discord App Detected”, install the userscript below and refresh the Discord tab.</p>
-<a href="/discord-auto-continue.user.js" target="_blank" class="btn-blue" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Download Auto-Continue Script</a>
-<p class="msg">Use Tampermonkey/Violentmonkey in your browser, then open Discord and the script will auto-click “Continue in Browser”.</p>
-</div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
 <button class="btn-green" id="startMic">▶ Start Mic</button>
@@ -311,43 +332,26 @@ async function launchDiscord(idx){vcMsg.textContent='Launching Discord for bot '
 async function copyToken(idx){try{vcMsg.textContent='Copying token...';const r=await fetch('/token/'+idx);if(!r.ok){vcMsg.textContent='Failed to get token';return}const j=await r.json();const tok=j.token;await navigator.clipboard.writeText(tok);vcMsg.textContent='Token copied to clipboard';}catch(e){vcMsg.textContent='Copy failed: '+e.message}}
 async function pasteTokenLogin(idx){
   try{
-    // Try clipboard first
     let tok = null;
     try{ tok = await navigator.clipboard.readText(); if(tok && tok.trim()) tok = tok.trim(); else tok = null; }catch(e){ tok = null; }
-    if(!tok){ tok = prompt('Paste token for bot '+idx+' (will not be sent to server)'); }
+    if(!tok){ tok = prompt('Paste token for bot '+idx+' (server login)'); }
     if(!tok){ vcMsg.textContent='No token provided'; return; }
-    // Open local-login and postMessage token (same-origin)
-    const win = window.open('/local-login','_blank');
-    const origin = location.origin;
-    const send = ()=>{ try{ if(win && !win.closed) win.postMessage({token:tok}, origin); vcMsg.textContent='Token sent to login page'; }catch(e){ /* ignore */ } };
-    // attempt to send after open and periodically
-    const t1 = setInterval(()=>{ if(win && !win.closed) send(); else clearInterval(t1); },300);
-    setTimeout(()=>{ clearInterval(t1); send(); },1500);
+    vcMsg.textContent='Starting backend login...';
+    const response = await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});
+    const data = await response.json();
+    if(response.ok){ vcMsg.textContent='Login started, session id: '+data.id; } else { vcMsg.textContent='Login failed: '+(data.error||response.statusText); }
   }catch(e){ vcMsg.textContent='Paste login failed: '+e.message; }
 }
 async function pasteTokenLoginAll(){
   try{
-    // Try clipboard first
     let tok = null;
     try{ tok = await navigator.clipboard.readText(); if(tok && tok.trim()) tok = tok.trim(); else tok = null; }catch(e){ tok = null; }
-    if(!tok){ tok = prompt('Paste token for all bots (will not be sent to server)'); }
+    if(!tok){ tok = prompt('Paste token for all bots (server login)'); }
     if(!tok){ vcMsg.textContent='No token provided'; return; }
-    // Get number of bots from status endpoint
-    const r = await fetch('/status'); if(!r.ok){ vcMsg.textContent='Failed to get bot count'; return; }
-    const d = await r.json(); const n = (d.bots||[]).length || 0;
-    if(n<=0){ vcMsg.textContent='No bots'; return; }
-    vcMsg.textContent='Opening login tabs for '+n+' bots...';
-    for(let i=0;i<n;i++){
-      const winName = 'local-login-'+Date.now()+'-'+i;
-      const win = window.open('/local-login','_blank');
-      const origin = location.origin;
-      const send = ()=>{ try{ if(win && !win.closed) win.postMessage({token:tok}, origin); }catch(e){} };
-      const t1 = setInterval(()=>{ if(win && !win.closed) send(); else clearInterval(t1); },300);
-      setTimeout(()=>{ clearInterval(t1); send(); },1500);
-      // small delay to avoid overwhelming popup blockers
-      await new Promise(r=>setTimeout(r,350));
-    }
-    vcMsg.textContent='Opened login tabs';
+    vcMsg.textContent='Starting backend login...';
+    const response = await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});
+    const data = await response.json();
+    if(response.ok){ vcMsg.textContent='Login started, session id: '+data.id; } else { vcMsg.textContent='Login failed: '+(data.error||response.statusText); }
   }catch(e){ vcMsg.textContent='Paste login all failed: '+e.message; }
 }
 
@@ -359,32 +363,45 @@ fetchStatus();setInterval(fetchStatus,10000)
 
   if(req.url==='/health'&&req.method==='GET'){res.writeHead(200);res.end(JSON.stringify({status:'ok',bots:bots.length}));return;}
 
-  if(req.url==='/discord-auto-continue.user.js'&&req.method==='GET'){
-    try{
-      const script = fs.readFileSync('./discord-auto-continue.user.js','utf8');
-      res.writeHead(200,{'Content-Type':'application/javascript'});
-      res.end(script);
-    }catch(e){res.writeHead(500);res.end('/* failed to load script */');}
+  if(req.url==='/local-login'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Server Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea{width:100%;height:90px;border-radius:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Server Discord Token Login</h1><p>Paste your token below. The server will log in using Puppeteer and handle Discord locally on the backend.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)."></textarea><div><button id="login">Login on Server</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.9rem">No browser extension needed. The login happens on the backend.</p><div id="msg" style="margin-top:12px;color:#cbd5e1;"></div></div><script>document.getElementById('login').addEventListener('click',async()=>{const t=document.getElementById('tok').value.trim();if(!t){alert('Enter a token');return}const msg=document.getElementById('msg');msg.textContent='Starting login...';try{const r=await fetch('/login/discord',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})});const d=await r.json();if(r.ok){msg.innerHTML='Login started, session id: '+d.id+'<br><a href="/login/discord/'+d.id+'">Check status</a>';}else{msg.textContent='Error: '+(d.error||r.statusText);} }catch(e){msg.textContent='Failed: '+e.message;}});</script></body></html>`);
     return;
   }
 
-  // Local-login page: client-side only. Paste token here in your browser to log into Discord locally.
-  if(req.url==='/local-login'&&req.method==='GET'){
-    res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea{width:100%;height:90px;border-radius:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Local Discord Token Login</h1><p>Paste your token below. This page runs only in your browser and <strong>does not send the token to the server</strong>. It will store the token in your browser's localStorage and redirect you to Discord.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)."></textarea><div><button id="login">Login to Discord Locally</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.9rem">Warning: Do not paste tokens on untrusted machines. This will log you into Discord as that account in this browser.</p></div><script>
-document.getElementById('login').addEventListener('click',()=>{const t=document.getElementById('tok').value.trim();if(!t){alert('Enter a token');return}try{localStorage.setItem('token',JSON.stringify(t));location.href='https://discord.com/channels/@me'}catch(e){alert('Failed: '+e.message)}});
-// Accept token via postMessage from the main page (same origin expected)
-window.addEventListener('message', (ev)=>{
-  try{
-    if(ev.origin !== location.origin) return;
-    const t = ev.data && ev.data.token;
-    if(t && typeof t === 'string'){
-      document.getElementById('tok').value = t;
-      try{ localStorage.setItem('token', JSON.stringify(t)); location.href='https://discord.com/channels/@me'; }catch(e){}
-    }
-  }catch(e){}
-}, false);
-</script></body></html>`);
+  if(req.url==='/login/discord'&&req.method==='POST'){
+    try{
+      const b = await parseJSONBody(req);
+      const token = (b.token||'').trim();
+      if(!token){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'token required'}));return;}
+      const id = Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+      startDiscordBackendLogin(token,id);
+      res.writeHead(202,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'started',id}));
+    }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
+    return;
+  }
+
+  const loginStatusMatch = req.url.match(/^\/login\/discord\/([a-z0-9]+)$/);
+  if(loginStatusMatch && req.method==='GET'){
+    const id = loginStatusMatch[1];
+    const session = loginSessions[id];
+    if(!session){res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'not found'}));return;}
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify(session));
+    return;
+  }
+
+  const loginScreenshotMatch = req.url.match(/^\/login\/discord\/([a-z0-9]+)\/screenshot$/);
+  if(loginScreenshotMatch && req.method==='GET'){
+    const id = loginScreenshotMatch[1];
+    const session = loginSessions[id];
+    const p = `./sessions/backend-${id}.png`;
+    if(session && fs.existsSync(p)){
+      const img = fs.readFileSync(p);
+      res.writeHead(200,{'Content-Type':'image/png'});
+      res.end(img);
+    } else { res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'no screenshot'})); }
     return;
   }
 
