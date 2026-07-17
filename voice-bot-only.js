@@ -259,6 +259,11 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
   <button class="btn-teal" id="pasteAllBtn">Paste & Login All</button>
 </div>
 <div class="bot-grid" id="botGrid"></div></div>
+<div class="card"><h2>🛠 Discord App Prompt</h2>
+<p>If Discord shows “Discord App Detected”, install the userscript below and refresh the Discord tab.</p>
+<a href="/discord-auto-continue.user.js" target="_blank" class="btn-blue" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Download Auto-Continue Script</a>
+<p class="msg">Use Tampermonkey/Violentmonkey in your browser, then open Discord and the script will auto-click “Continue in Browser”.</p>
+</div>
 <div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
 <button class="btn-green" id="startMic">▶ Start Mic</button>
@@ -353,6 +358,15 @@ fetchStatus();setInterval(fetchStatus,10000)
   }
 
   if(req.url==='/health'&&req.method==='GET'){res.writeHead(200);res.end(JSON.stringify({status:'ok',bots:bots.length}));return;}
+
+  if(req.url==='/discord-auto-continue.user.js'&&req.method==='GET'){
+    try{
+      const script = fs.readFileSync('./discord-auto-continue.user.js','utf8');
+      res.writeHead(200,{'Content-Type':'application/javascript'});
+      res.end(script);
+    }catch(e){res.writeHead(500);res.end('/* failed to load script */');}
+    return;
+  }
 
   // Local-login page: client-side only. Paste token here in your browser to log into Discord locally.
   if(req.url==='/local-login'&&req.method==='GET'){
