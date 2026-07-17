@@ -273,8 +273,8 @@ const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElemen
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
-botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
-return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="launchDiscord('+b.index+')">Open Discord</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
+  botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
+return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">Bot:</span>'+(b.tag||'Unknown')+'</div><div><span class="tag">Token:</span>'+(b.tokenMask||'-')+'</div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-blue" onclick="copyToken('+b.index+')">Copy Token</button><button class="btn-teal" onclick="pasteTokenLogin('+b.index+')">Paste & Login</button><button class="btn-gray" onclick="openSession('+b.index+')">Bot Info</button></div></div>'}).join('')}
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
@@ -298,12 +298,49 @@ document.getElementById('startMic').onclick=async()=>{try{const startRes=await f
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
 function openSession(idx){window.open('/session/'+idx,'_blank','toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+screen.availWidth+',height='+screen.availHeight+',top=0,left=0')}
 async function launchDiscord(idx){vcMsg.textContent='Launching Discord for bot '+idx+'...';const r=await fetch('/launch/'+idx,{method:'POST'});const d=await r.json();vcMsg.textContent=d.status||d.error;}
+async function copyToken(idx){try{vcMsg.textContent='Copying token...';const r=await fetch('/token/'+idx);if(!r.ok){vcMsg.textContent='Failed to get token';return}const j=await r.json();const tok=j.token;await navigator.clipboard.writeText(tok);vcMsg.textContent='Token copied to clipboard';}catch(e){vcMsg.textContent='Copy failed: '+e.message}}
+async function pasteTokenLogin(idx){
+  try{
+    // Try clipboard first
+    let tok = null;
+    try{ tok = await navigator.clipboard.readText(); if(tok && tok.trim()) tok = tok.trim(); else tok = null; }catch(e){ tok = null; }
+    if(!tok){ tok = prompt('Paste token for bot '+idx+' (will not be sent to server)'); }
+    if(!tok){ vcMsg.textContent='No token provided'; return; }
+    // Open local-login and postMessage token (same-origin)
+    const win = window.open('/local-login','_blank');
+    const origin = location.origin;
+    const send = ()=>{ try{ if(win && !win.closed) win.postMessage({token:tok}, origin); vcMsg.textContent='Token sent to login page'; }catch(e){ /* ignore */ } };
+    // attempt to send after open and periodically
+    const t1 = setInterval(()=>{ if(win && !win.closed) send(); else clearInterval(t1); },300);
+    setTimeout(()=>{ clearInterval(t1); send(); },1500);
+  }catch(e){ vcMsg.textContent='Paste login failed: '+e.message; }
+}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
   }
 
   if(req.url==='/health'&&req.method==='GET'){res.writeHead(200);res.end(JSON.stringify({status:'ok',bots:bots.length}));return;}
+
+  // Local-login page: client-side only. Paste token here in your browser to log into Discord locally.
+  if(req.url==='/local-login'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'text/html'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Discord Token Login</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px}input,button,textarea{font:inherit} .card{max-width:720px;background:#071022;border-radius:12px;padding:20px;border:1px solid #152231}textarea{width:100%;height:90px;border-radius:8px;padding:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#16a34a;color:#fff;font-weight:700;cursor:pointer}</style></head><body><h1>Local Discord Token Login</h1><p>Paste your token below. This page runs only in your browser and <strong>does not send the token to the server</strong>. It will store the token in your browser's localStorage and redirect you to Discord.</p><div class="card"><textarea id="tok" placeholder="Paste token here (starts with MT...)."></textarea><div><button id="login">Login to Discord Locally</button></div><p style="margin-top:12px;color:#9ca3af;font-size:0.9rem">Warning: Do not paste tokens on untrusted machines. This will log you into Discord as that account in this browser.</p></div><script>
+document.getElementById('login').addEventListener('click',()=>{const t=document.getElementById('tok').value.trim();if(!t){alert('Enter a token');return}try{localStorage.setItem('token',JSON.stringify(t));location.href='https://discord.com/channels/@me'}catch(e){alert('Failed: '+e.message)}});
+// Accept token via postMessage from the main page (same origin expected)
+window.addEventListener('message', (ev)=>{
+  try{
+    if(ev.origin !== location.origin) return;
+    const t = ev.data && ev.data.token;
+    if(t && typeof t === 'string'){
+      document.getElementById('tok').value = t;
+      try{ localStorage.setItem('token', JSON.stringify(t)); location.href='https://discord.com/channels/@me'; }catch(e){}
+    }
+  }catch(e){}
+}, false);
+</script></body></html>`);
+    return;
+  }
 
   if(req.url==='/audio/upload'&&req.method==='POST'){
     const ws=fs.createWriteStream('./shared_audio.mp3');
@@ -346,6 +383,18 @@ fetchStatus();setInterval(fetchStatus,10000)
       res.writeHead(200,{'Content-Type':'image/png'});
       res.end(img);
     }else{res.writeHead(404);res.end('No screenshot');}
+    return;
+  }
+
+  // Return full token for a given session index (use carefully)
+  const tokenMatch = req.url.match(/^\/token\/(\d+)$/);
+  if(tokenMatch && req.method==='GET'){
+    const si = Number(tokenMatch[1]) - 1;
+    if(si < 0 || si >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
+    const t = bots[si].token || null;
+    if(!t){res.writeHead(404);res.end(JSON.stringify({error:'No token'}));return;}
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({token:t}));
     return;
   }
 
