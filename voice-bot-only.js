@@ -256,24 +256,20 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 </div>
 <div class="msg" id="micMsg"></div>
 </div>
-<div class="card"><h2>🔐 Verification Queue <span class="badge" id="queueCount">0</span></h2>
-<input id="inviteInput" type="text" placeholder="discord.gg/xxxxxx"/>
-<div class="row"><button class="btn-green" id="joinInviteBtn">Queue Invite</button></div>
-<div class="msg" id="verifyMsg"></div>
-<div class="verify-grid" id="verifyGrid"></div>
+<div class="card"><h2>🔐 Verification Sessions</h2>
+<p>Click a bot session button below to open a dedicated verification page.</p>
+<div class="msg">Each bot gets its own verification session grid.</div>
 </div>
 <script>
 const vcMsg=document.getElementById('vcMsg'),audioMsg=document.getElementById('audioMsg'),botGrid=document.getElementById('botGrid'),botCount=document.getElementById('botCount'),playState=document.getElementById('playState');
 const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput');
 const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
-const inviteInput=document.getElementById('inviteInput'),verifyMsg=document.getElementById('verifyMsg'),verifyGrid=document.getElementById('verifyGrid'),queueCount=document.getElementById('queueCount');
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
 botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
-return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'</div>'}).join('')}
-function renderVerification(list){queueCount.textContent=list.length; if(list.length===0){verifyGrid.innerHTML='<div style="color:#94a3b8;padding:20px;text-align:center">No bots queued.</div>';return;} verifyGrid.innerHTML=list.map(v=>'<div class="verify-card"><h3>#'+v.botIndex+'</h3><div class="bot-status">'+v.type+'</div><div class="guild">'+v.guildName+'</div><textarea id="solve-'+v.botIndex+'" placeholder="Paste captcha solution"></textarea><button class="btn-green" onclick="solveVerify('+v.botIndex+')">✔ Solve</button><button class="btn-red" onclick="skipVerify('+v.botIndex+')">✖ Skip</button></div>').join('')}
-async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d);renderVerification(d.verifications||[])}catch(e){vcMsg.textContent='Fetch failed'}}
+return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div><div><span class="tag">Verif:</span>'+(b.needsVerification?'<span class="failed">Needed</span>':'<span class="ready">OK</span>')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'<div class="row"><button class="btn-gray" onclick="openSession('+b.index+')">Session</button></div></div>'}).join('')}
+async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
 document.getElementById('stayBtn').onclick=async()=>{vcMsg.textContent='Rejoining...';const r=await fetch('/stay',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
@@ -294,9 +290,7 @@ document.getElementById('deafBtn').onclick=()=>va('/audio/deafen','Deafening...'
 document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafening...')
 document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
 document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
-document.getElementById('joinInviteBtn').onclick=async()=>{const inv=inviteInput.value.trim();if(!inv){verifyMsg.textContent='Enter invite';return}verifyMsg.textContent='Adding...';const r=await fetch('/invite/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();verifyMsg.textContent='Added '+(d.results?d.results.filter(r=>r.success).length:0)+' bots';fetchStatus()}
-window.solveVerify=async(bi)=>{const txt=document.getElementById('solve-'+bi).value;if(!txt){verifyMsg.textContent='Enter solution';return}verifyMsg.textContent='Solving...';await fetch('/verification/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi),solution:txt})});verifyMsg.textContent='Solved Bot '+bi;fetchStatus()}
-window.skipVerify=async(bi)=>{await fetch('/verification/skip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi)})});verifyMsg.textContent='Skipped Bot '+bi;fetchStatus()}
+function openSession(idx){window.open('/session/'+idx,'_blank')}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -343,54 +337,74 @@ fetchStatus();setInterval(fetchStatus,10000)
     res.writeHead(200);res.end(JSON.stringify({status:'done',results}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
-  if(req.url==='/leave'&&req.method==='POST'){for(const b of bots)b.leaveChannel();res.writeHead(200);res.end(JSON.stringify({status:'left'}));return;}
+  const sessionMatch = req.url.match(/^\/session\/(\d+)(?:\/(invite|solve|skip))?$/);
+  if(sessionMatch){
+    const idx = Number(sessionMatch[1]) - 1;
+    if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
+    const bot = bots[idx];
+    const method = sessionMatch[2];
 
-  // ================================================================
-  // VERIFICATION PAGE
-  // ================================================================
-  if(req.url==='/verification'&&req.method==='GET'){
-    res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Verification Solver</title>
-<style>
-*{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}
-h1{margin:0 0 16px}p{margin:4px 0 16px;color:#9ca3af}input,button,textarea{font:inherit}
-input[type="text"]{width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px}
-button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700}
-.card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}
-.verify-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-.verify-card{background:#111827;border:1px solid rgba(148,163,184,.12);border-radius:14px;padding:16px;font-size:.85rem;position:relative}
-.verify-card h3{margin:0 0 8px;font-size:1rem;color:#e5e7eb}
-.verify-card .bot-status{color:#94a3b8;font-size:12px;margin-bottom:8px}
-.verify-card .guild{color:#38bdf8;font-size:12px;margin-bottom:10px}
-.verify-card textarea{width:100%;min-height:50px;margin-top:8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;font-family:inherit;font-size:12px;resize:vertical;}
-.verify-card button{margin-top:8px;width:100%;}
-.btn-green{background:#22c55e;color:#0f172a}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
-</style></head><body>
-<h1>🔐 Verification Solver</h1>
-<div class="card">
-<p>Enter invite link to queue bots for captcha solving. Each bot appears in grid — enter solution and click Solve.</p>
-<div class="row">
-<input type="text" id="inviteInput" placeholder="discord.gg/xxxxxx"/>
-<button class="btn-green" id="joinInviteBtn">Add All Bots to Grid</button>
+    if(!method && req.method==='GET'){
+      const queued = verificationQueue.find(v=>v.botIndex===idx+1);
+      res.writeHead(200,{'Content-Type':'text/html'});
+      res.end(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Bot Session ${idx+1}</title>
+<style>*{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}h1{margin:0 0 12px}p{margin:6px 0 12px;color:#cbd5e1}input,button,textarea{font:inherit}input[type="text"],textarea{width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px}button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700;margin-top:10px} .card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}.btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}</style></head><body>
+<h1>Bot Session ${idx+1}</h1>
+<div class="card"><p>Status: ${bot.status}</p><p>Voice state: ${bot.voiceState}</p><p>Channel: ${bot.channelId || 'N/A'}</p><p>Guild: ${bot.guildId || 'N/A'}</p><p>Verification: ${queued ? 'Needed' : (bot.needsVerification ? 'Needed' : 'OK')}</p><p>Queue target: ${queued ? queued.guildName : 'N/A'}</p></div>
+<div class="card"><h2>Invite / Captcha</h2>
+<input id="inviteInput" type="text" placeholder="discord.gg/xxxxxx"/>
+<div class="row"><button class="btn-green" id="joinInviteBtn">Invite Bot</button></div>
+<div class="row"><textarea id="captchaSolution" placeholder="Paste captcha solution"></textarea></div>
+<div class="row"><button class="btn-blue" id="solveBtn">Solve Captcha</button><button class="btn-red" id="skipBtn">Skip</button></div>
+<div class="msg" id="sessionMsg"></div>
 </div>
-<div class="msg" id="verifyMsg"></div>
-</div>
-<div class="card"><h2>Captcha Queue <span id="queueCount" style="color:#f43f5e;font-weight:700">0</span></h2><div class="verify-grid" id="verifyGrid"></div></div>
 <script>
-const verifyGrid=document.getElementById('verifyGrid'),verifyMsg=document.getElementById('verifyMsg'),queueCount=document.getElementById('queueCount');
-function renderAll(list){queueCount.textContent=list.length;if(list.length===0){verifyGrid.innerHTML='<div style="color:#94a3b8;padding:20px;text-align:center">No bots queued. Enter invite and click Add.</div>';return}
-verifyGrid.innerHTML=list.map(v=>'<div class="verify-card"><h3>#'+v.botIndex+'</h3><div class="bot-status">'+v.type+'</div><div class="guild">'+v.guildName+'</div><textarea id="solve-'+v.botIndex+'" placeholder="Paste captcha solution"></textarea><button class="btn-green" onclick="solveVerify('+v.botIndex+')">✔ Solve</button><button class="btn-red" onclick="skipVerify('+v.botIndex+')">✖ Skip</button></div>').join('')}
-async function fetchQueue(){try{const r=await fetch('/status');const d=await r.json();renderAll(d.verifications||[])}catch(e){}}
-document.getElementById('joinInviteBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){verifyMsg.textContent='Enter invite';return}
-verifyMsg.textContent='Adding...';const r=await fetch('/invite/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();verifyMsg.textContent='Added '+(d.results?d.results.filter(r=>r.success).length:0)+' bots';fetchQueue()}
-window.solveVerify=async(bi)=>{const txt=document.getElementById('solve-'+bi).value;if(!txt){verifyMsg.textContent='Enter solution';return}
-verifyMsg.textContent='Solving...';await fetch('/verification/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi),solution:txt})});verifyMsg.textContent='Solved Bot '+bi;fetchQueue()}
-window.skipVerify=async(bi)=>{await fetch('/verification/skip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi)})});verifyMsg.textContent='Skipped Bot '+bi;fetchQueue()}
-fetchQueue();setInterval(fetchQueue,3000)
-</script></body></html>`);
-    return;
+const sessionMsg=document.getElementById('sessionMsg');
+document.getElementById('joinInviteBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){sessionMsg.textContent='Enter invite';return}sessionMsg.textContent='Inviting...';const r=await fetch('/session/${idx+1}/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
+document.getElementById('solveBtn').onclick=async()=>{const txt=document.getElementById('captchaSolution').value.trim();if(!txt){sessionMsg.textContent='Enter solution';return}sessionMsg.textContent='Solving...';const r=await fetch('/session/${idx+1}/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({solution:txt})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
+document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Skipping...';const r=await fetch('/session/${idx+1}/skip',{method:'POST'});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
+</script>
+</body></html>`);
+      return;
+    }
+
+    if(method==='invite'&&req.method==='POST'){
+      try{
+        const b=await parseJSONBody(req);
+        const inviteCode=extractInviteCode(b.invite);
+        if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
+        if(bot.status!=='ready'){res.writeHead(400);res.end(JSON.stringify({error:'Bot offline'}));return;}
+        try{
+          if(!bot.client.api) throw new Error('Discord API not available');
+          await bot.client.api.invites(inviteCode).post();
+          res.writeHead(200);res.end(JSON.stringify({status:'Invite sent'}));
+        }catch(err){
+          const message=(err?.message||String(err)).slice(0,120);
+          if(!verificationQueue.some(v=>v.botIndex===idx+1)){
+            verificationQueue.push({botIndex:idx+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
+          }
+          bot.needsVerification=true;bot.verificationType='Captcha';
+          res.writeHead(200);res.end(JSON.stringify({status:'Captcha needed',error:message}));
+        }
+      }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+      return;
+    }
+
+    if(method==='solve'&&req.method==='POST'){
+      try{const b=await parseJSONBody(req);const qi=verificationQueue.findIndex(v=>v.botIndex===idx+1);if(qi>=0)verificationQueue.splice(qi,1);bot.needsVerification=false;bot.verificationType=null;res.writeHead(200);res.end(JSON.stringify({status:'Solved'}));}
+      catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+      return;
+    }
+
+    if(method==='skip'&&req.method==='POST'){
+      try{const qi=verificationQueue.findIndex(v=>v.botIndex===idx+1);if(qi>=0)verificationQueue.splice(qi,1);bot.needsVerification=false;bot.verificationType=null;res.writeHead(200);res.end(JSON.stringify({status:'Skipped'}));}
+      catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+      return;
+    }
   }
+
+  if(req.url==='/leave'&&req.method==='POST'){for(const b of bots)b.leaveChannel();res.writeHead(200);res.end(JSON.stringify({status:'left'}));return;}
 
   // ================================================================
   // MIC PAGE — SINGLE continuous POST stream to server
@@ -513,54 +527,6 @@ fetchStatus();setInterval(fetchStatus,2000)
       }
     });
     return;
-  }
-
-  // ================================================================
-  // INVITE — queue ALL bots for verification
-  // ================================================================
-  if(req.url==='/invite/join'&&req.method==='POST'){
-    try{
-      const b=await parseJSONBody(req);
-      const inviteCode=extractInviteCode(b.invite);
-      if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
-      const results=await Promise.all(bots.map(async(bot,i)=>{
-        if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};
-        try{
-          if(!bot.client.api) throw new Error('Discord API not available');
-          await bot.client.api.invites(inviteCode).post();
-          return{bot:i+1,success:true};
-        }catch(err){
-          const message=(err?.message||String(err)).slice(0,120);
-          if(!verificationQueue.some(v=>v.botIndex===i+1)){
-            verificationQueue.push({botIndex:i+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
-          }
-          bot.needsVerification=true;bot.verificationType='Captcha';
-          return{bot:i+1,success:false,error:message};
-        }
-      }));
-      res.writeHead(200);res.end(JSON.stringify({status:'queued',results}));
-    }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
-    return;
-  }
-
-  if(req.url==='/verification/solve'&&req.method==='POST'){
-    try{const b=await parseJSONBody(req);const idx=b.botIndex-1;
-    if(idx<0||idx>=bots.length){res.writeHead(400);res.end(JSON.stringify({error:'Invalid bot'}));return;}
-    const qi=verificationQueue.findIndex(v=>v.botIndex===b.botIndex);
-    if(qi>=0)verificationQueue.splice(qi,1);
-    if(bots[idx]){bots[idx].needsVerification=false;bots[idx].verificationType=null;}
-    res.writeHead(200);res.end(JSON.stringify({status:'Bot '+b.botIndex+' solved'}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
-  }
-
-  if(req.url==='/verification/skip'&&req.method==='POST'){
-    try{const b=await parseJSONBody(req);const idx=b.botIndex-1;
-    if(idx<0||idx>=bots.length){res.writeHead(400);res.end(JSON.stringify({error:'Invalid bot'}));return;}
-    const qi=verificationQueue.findIndex(v=>v.botIndex===b.botIndex);
-    if(qi>=0)verificationQueue.splice(qi,1);
-    if(bots[idx]){bots[idx].needsVerification=false;bots[idx].verificationType=null;}
-    res.writeHead(200);res.end(JSON.stringify({status:'Bot '+b.botIndex+' skipped'}));}
-    catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
   res.writeHead(404);res.end(JSON.stringify({error:'not found'}));
