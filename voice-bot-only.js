@@ -218,7 +218,13 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 .slider-row{display:flex;align-items:center;gap:14px;margin:10px 0}
 .slider-row input[type="range"]{flex:1;accent-color:#f43f5e;height:6px}
 .vol-label{font-weight:700;color:#f43f5e;min-width:60px;text-align:right}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}
-.badge{display:inline-block;background:#1e293b;border-radius:20px;padding:2px 10px;font-size:.75rem;margin-left:6px}
+  .verify-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-top:12px}
+  .verify-card{background:#111827;border:1px solid rgba(148,163,184,.12);border-radius:14px;padding:16px;font-size:.85rem}
+  .verify-card h3{margin:0 0 8px;font-size:1rem;color:#e5e7eb}
+  .verify-card .bot-status{color:#94a3b8;font-size:12px;margin-bottom:8px}
+  .verify-card .guild{color:#38bdf8;font-size:12px;margin-bottom:10px}
+  .verify-card textarea{width:100%;min-height:50px;margin-top:8px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:8px;font-family:inherit;font-size:12px;resize:vertical}
+  .verify-card button{margin-top:8px;width:100%}
 .btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}
 .btn-purple{background:#8b5cf6;color:#fff}.btn-gray{background:#475569;color:#fff}.btn-teal{background:#14b8a6;color:#0f172a}
 </style></head><body>
@@ -243,21 +249,31 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 </div>
 <div class="msg" id="audioMsg"></div></div>
 <div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2><div class="bot-grid" id="botGrid"></div></div>
-<div class="card">
-<h2>🔧 Tools</h2>
+<div class="card"><h2>🎤 Mic Routing <span class="badge" id="micStatusBadge">Stopped</span></h2>
 <div class="row">
-<button class="btn-purple" id="openVerify">🔐 Verification</button>
-<button class="btn-teal" id="openMic">🎤 Mic Routing</button>
+<button class="btn-green" id="startMic">▶ Start Mic</button>
+<button class="btn-red" id="stopMic">⏹ Stop Mic</button>
 </div>
+<div class="msg" id="micMsg"></div>
+</div>
+<div class="card"><h2>🔐 Verification Queue <span class="badge" id="queueCount">0</span></h2>
+<input id="inviteInput" type="text" placeholder="discord.gg/xxxxxx"/>
+<div class="row"><button class="btn-green" id="joinInviteBtn">Queue Invite</button></div>
+<div class="msg" id="verifyMsg"></div>
+<div class="verify-grid" id="verifyGrid"></div>
 </div>
 <script>
 const vcMsg=document.getElementById('vcMsg'),audioMsg=document.getElementById('audioMsg'),botGrid=document.getElementById('botGrid'),botCount=document.getElementById('botCount'),playState=document.getElementById('playState');
 const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput');
+const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
+const inviteInput=document.getElementById('inviteInput'),verifyMsg=document.getElementById('verifyMsg'),verifyGrid=document.getElementById('verifyGrid'),queueCount=document.getElementById('queueCount');
+let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
-botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence'
-botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'')
+botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
+botGrid.innerHTML=d.bots.map(b=>{const sc=b.ready?'ready':'offline';const vc=b.connected?'connected':(b.voiceState==='failed'?'failed':'');
 return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+sc+'">'+(b.ready?'ON':'OFF')+'</span></div><div><span class="tag">VC:</span><span class="'+vc+'">'+(b.connected?'✅':(b.voiceState==='failed'?'❌':'⏳'))+'</span></div><div><span class="tag">Ch:</span>'+(b.channelId?b.channelId.slice(0,8)+'..':'-')+'</div>'+(b.lastError?'<div style="color:#ef4444;font-size:.75rem;margin-top:4px;">'+b.lastError.slice(0,40)+'</div>':'')+'</div>'}).join('')}
-async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
+function renderVerification(list){queueCount.textContent=list.length; if(list.length===0){verifyGrid.innerHTML='<div style="color:#94a3b8;padding:20px;text-align:center">No bots queued.</div>';return;} verifyGrid.innerHTML=list.map(v=>'<div class="verify-card"><h3>#'+v.botIndex+'</h3><div class="bot-status">'+v.type+'</div><div class="guild">'+v.guildName+'</div><textarea id="solve-'+v.botIndex+'" placeholder="Paste captcha solution"></textarea><button class="btn-green" onclick="solveVerify('+v.botIndex+')">✔ Solve</button><button class="btn-red" onclick="skipVerify('+v.botIndex+')">✖ Skip</button></div>').join('')}
+async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d);renderVerification(d.verifications||[])}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
 document.getElementById('stayBtn').onclick=async()=>{vcMsg.textContent='Rejoining...';const r=await fetch('/stay',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
@@ -276,8 +292,11 @@ document.getElementById('muteBtn').onclick=()=>va('/audio/mute','Muting...')
 document.getElementById('unmuteBtn').onclick=()=>va('/audio/unmute','Unmuting...')
 document.getElementById('deafBtn').onclick=()=>va('/audio/deafen','Deafening...')
 document.getElementById('undeafBtn').onclick=()=>va('/audio/undeafen','Undeafening...')
-document.getElementById('openVerify').onclick=()=>window.open('/verification','_blank');
-document.getElementById('openMic').onclick=()=>window.open('/mic','_blank');
+document.getElementById('startMic').onclick=async()=>{try{const startRes=await fetch('/mic/start',{method:'POST'});if(!startRes.ok){micMsg.textContent='Server mic start failed';return}mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});const stream=new ReadableStream({start(controller){mediaRecorder.ondataavailable=async(e)=>{if(e.data.size>0){try{const buffer=await e.data.arrayBuffer();controller.enqueue(new Uint8Array(buffer));}catch(err){console.error('Mic chunk enqueue failed',err);}}};mediaRecorder.onstop=()=>controller.close();mediaRecorder.onerror=(event)=>{console.error('MediaRecorder error',event.error);controller.error(event.error);};},cancel(reason){console.log('Mic stream cancelled',reason);if(mediaRecorder&&mediaRecorder.state!=='inactive')mediaRecorder.stop();}});uploadController=new AbortController();fetch('/mic/upload',{method:'POST',headers:{'Content-Type':'audio/webm'},body:stream,signal:uploadController.signal}).catch(err=>{if(err.name!=='AbortError')console.error('Mic upload failed',err);});mediaRecorder.start(1000);micMsg.textContent='🔴 Mic streaming continuously...';}catch(e){micMsg.textContent='❌ Error: '+e.message;}} 
+document.getElementById('stopMic').onclick=async()=>{if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}if(uploadController){uploadController.abort();uploadController=null;}micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});}
+document.getElementById('joinInviteBtn').onclick=async()=>{const inv=inviteInput.value.trim();if(!inv){verifyMsg.textContent='Enter invite';return}verifyMsg.textContent='Adding...';const r=await fetch('/invite/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();verifyMsg.textContent='Added '+(d.results?d.results.filter(r=>r.success).length:0)+' bots';fetchStatus()}
+window.solveVerify=async(bi)=>{const txt=document.getElementById('solve-'+bi).value;if(!txt){verifyMsg.textContent='Enter solution';return}verifyMsg.textContent='Solving...';await fetch('/verification/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi),solution:txt})});verifyMsg.textContent='Solved Bot '+bi;fetchStatus()}
+window.skipVerify=async(bi)=>{await fetch('/verification/skip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({botIndex:parseInt(bi)})});verifyMsg.textContent='Skipped Bot '+bi;fetchStatus()}
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
@@ -400,43 +419,54 @@ h1{margin:0 0 16px}p{margin:4px 0 16px;color:#9ca3af}button{font:inherit;cursor:
 </div>
 <script>
 const micMsg=document.getElementById('micMsg'),micStatus=document.getElementById('micStatus');
-let mediaRecorder=null;let mediaStream=null;let uploadReq=null;let uploadReader=null;
+let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 document.getElementById('startMic').onclick=async()=>{
   try{
-    // Start mic routing on server
     const startRes=await fetch('/mic/start',{method:'POST'});
     if(!startRes.ok){micMsg.textContent='Server mic start failed';return}
-    
-    // Get user mic
+
     mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
     mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});
-    
-    // Open SINGLE continuous POST request
-    uploadReq=new XMLHttpRequest();
-    uploadReq.open('POST','/mic/upload',true);
-    uploadReq.setRequestHeader('Content-Type','audio/webm');
-    uploadReq.setRequestHeader('Transfer-Encoding','chunked');
-    
-    // Send each data chunk through the same open request
-    mediaRecorder.ondataavailable=async(e)=>{
-      if(e.data.size>0 && uploadReq.readyState===XMLHttpRequest.OPENED){
-        const reader=new FileReader();
-        reader.onload=()=>{
-          if(uploadReq.readyState===XMLHttpRequest.OPENED){
-            try{uploadReq.send(reader.result)}catch(ex){}
+
+    const stream = new ReadableStream({
+      start(controller) {
+        mediaRecorder.ondataavailable = async(e) => {
+          if (e.data.size > 0) {
+            try {
+              const buffer = await e.data.arrayBuffer();
+              controller.enqueue(new Uint8Array(buffer));
+            } catch (err) {
+              console.error('Mic chunk enqueue failed', err);
+            }
           }
         };
-        reader.readAsArrayBuffer(e.data);
+        mediaRecorder.onstop = () => controller.close();
+        mediaRecorder.onerror = (event) => {
+          console.error('MediaRecorder error', event.error);
+          controller.error(event.error);
+        };
+      },
+      cancel(reason) {
+        console.log('Mic stream cancelled', reason);
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       }
-    };
-    
+    });
+
+    uploadController = new AbortController();
+    fetch('/mic/upload',{
+      method:'POST',
+      headers:{'Content-Type':'audio/webm'},
+      body: stream,
+      signal: uploadController.signal
+    }).catch(err=>{if(err.name !== 'AbortError') console.error('Mic upload failed',err);});
+
     mediaRecorder.start(1000);
     micMsg.textContent='🔴 Mic streaming continuously...';
   }catch(e){micMsg.textContent='❌ Error: '+e.message;}
 };
 document.getElementById('stopMic').onclick=async()=>{
   if(mediaRecorder){mediaRecorder.stop();if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}}
-  if(uploadReq){try{uploadReq.abort()}catch(e){}uploadReq=null;}
+  if(uploadController){uploadController.abort();uploadController=null;}
   micMsg.textContent='⏹ Stopped';await fetch('/mic/stop',{method:'POST'});
 };
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();micStatus.textContent='Mic: '+(d.micActive?'🔴 Active':'⏹ Stopped')}catch(e){}}
@@ -468,11 +498,20 @@ fetchStatus();setInterval(fetchStatus,2000)
   if(req.url==='/mic/upload'&&req.method==='POST'){
     if(!micActive){startMicRouting();}
     if(micFfmpeg&&micFfmpeg.stdin&&!micFfmpeg.stdin.destroyed){
-      req.pipe(micFfmpeg.stdin);
+      req.pipe(micFfmpeg.stdin,{ end:false });
     }
-    // Keep the request open, don't end it
-    res.writeHead(200,{'Content-Type':'application/json'});
-    res.end(JSON.stringify({status:'streaming'}));
+    req.on('end',()=>{
+      if(!res.writableEnded){
+        res.writeHead(200,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'streaming'}));
+      }
+    });
+    req.on('error',(err)=>{
+      if(!res.writableEnded){
+        res.writeHead(500,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({error:err.message}));
+      }
+    });
     return;
   }
 
@@ -484,12 +523,21 @@ fetchStatus();setInterval(fetchStatus,2000)
       const b=await parseJSONBody(req);
       const inviteCode=extractInviteCode(b.invite);
       if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
-      const results=bots.map((bot,i)=>{
+      const results=await Promise.all(bots.map(async(bot,i)=>{
         if(bot.status!=='ready')return{bot:i+1,success:false,error:'Offline'};
-        verificationQueue.push({botIndex:i+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
-        bot.needsVerification=true;bot.verificationType='Captcha';
-        return{bot:i+1,success:true};
-      });
+        try{
+          if(!bot.client.api) throw new Error('Discord API not available');
+          await bot.client.api.invites(inviteCode).post();
+          return{bot:i+1,success:true};
+        }catch(err){
+          const message=(err?.message||String(err)).slice(0,120);
+          if(!verificationQueue.some(v=>v.botIndex===i+1)){
+            verificationQueue.push({botIndex:i+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
+          }
+          bot.needsVerification=true;bot.verificationType='Captcha';
+          return{bot:i+1,success:false,error:message};
+        }
+      }));
       res.writeHead(200);res.end(JSON.stringify({status:'queued',results}));
     }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
     return;
