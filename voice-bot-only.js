@@ -444,14 +444,15 @@ const userIdInput=document.getElementById('userId');
 const messageInput=document.getElementById('message');
 const countInput=document.getElementById('count');
 const sendBtn=document.getElementById('sendBtn');
+const statusUrl = new URL('/status', window.location.href).toString();
 let latestReadyBots = 0;
 let botStatusInterval = null;
 async function loadBotStatus(){
   try{
     setStatus('Loading bot status...', 'info');
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Status fetch timeout')), 10000));
-    const r = await Promise.race([fetch('/status'), timeoutPromise]);
-    if(!r.ok) throw new Error('Status fetch failed');
+    const r = await Promise.race([fetch(statusUrl), timeoutPromise]);
+    if(!r.ok) throw new Error('Status fetch failed: '+r.status);
     const d = await r.json();
     const ready = d.bots.filter(b=>b.ready).length;
     latestReadyBots = ready;
@@ -470,6 +471,10 @@ function startStatusAutoRefresh(){
   botStatusInterval = setInterval(loadBotStatus, 15000);
 }
 refreshStatus.addEventListener('click', ()=>{loadBotStatus();});
+window.addEventListener('load', ()=>{
+  loadBotStatus();
+  startStatusAutoRefresh();
+});
 document.getElementById('sendBtn').addEventListener('click', async()=>{
   const userId=userIdInput.value.trim();
   const message=messageInput.value.trim();
