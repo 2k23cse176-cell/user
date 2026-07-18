@@ -338,7 +338,7 @@ document.getElementById('refreshBtn').onclick=fetchStatus;
 document.getElementById('batchInviteBtn').onclick=async()=>{
   const inv=batchInviteInput.value.trim();
   if(!inv){batchInviteMsg.textContent='Enter invite link';return}
-  batchInviteMsg.textContent='Joining all bots in progress (this may take a while)...';
+  batchInviteMsg.textContent='Starting join process...';
   batchInviteResults.textContent='';
   try{
     const r=await fetch('/join-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});
@@ -347,26 +347,33 @@ document.getElementById('batchInviteBtn').onclick=async()=>{
       batchInviteMsg.textContent='Error: '+d.error;
       return;
     }
-    batchInviteMsg.textContent='Join process started for '+d.total+' bot(s). Polling for results...';
-    const pollInterval = setInterval(async()=>{
-      try{
-        const pr=await fetch('/join-all/status');
-        const pd=await pr.json();
-        if(pd.completed){
-          let lines = pd.completed+'/'+pd.total+' done:\n';
-          if(pd.results){
-            lines += pd.results.map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined ('+r.method+')':'❌ '+(r.error||'failed').slice(0,80))).join('\n');
+    if(d.status==='processing'){
+      batchInviteMsg.textContent='Processing '+d.total+' bot(s) in background. Polling for results...';
+      const pollInterval = setInterval(async()=>{
+        try{
+          const pr=await fetch('/join-all/status');
+          const pd=await pr.json();
+          if(pd.completed){
+            let lines = pd.completed+'/'+pd.total+' done:\n';
+            if(pd.results){
+              lines += pd.results.map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined ('+r.method+')':'❌ '+(r.error||'failed').slice(0,80))).join('\n');
+            }
+            batchInviteResults.textContent = lines;
+            if(pd.completed>=pd.total) clearInterval(pollInterval);
+            batchInviteMsg.textContent='Completed: '+pd.completed+'/'+pd.total;
+            fetchStatus();
           }
-          batchInviteResults.textContent = lines;
-          if(pd.completed>=pd.total) clearInterval(pollInterval);
-          batchInviteMsg.textContent='Completed: '+pd.completed+'/'+pd.total;
-          fetchStatus();
-        }
-      }catch(e){
-        clearInterval(pollInterval);
-        batchInviteMsg.textContent='Poll error: '+e.message;
+        }catch(e){}
+      },5000);
+    } else {
+      let lines = d.completed+'/'+d.total+' done:\n';
+      if(d.results){
+        lines += d.results.map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined ('+r.method+')':'❌ '+(r.error||'failed').slice(0,80))).join('\n');
       }
-    },3000);
+      batchInviteResults.textContent = lines;
+      batchInviteMsg.textContent='Completed: '+d.completed+'/'+d.total;
+      fetchStatus();
+    }
   }catch(e){
     batchInviteMsg.textContent='Request failed: '+e.message;
   }
@@ -694,54 +701,56 @@ startStatusAutoRefresh();
       const results = [];
       const total = readyBots.length;
       
-      // Process each bot sequentially to avoid rate limiting
-      for(const [idx, bot] of readyBots.entries()){
-        const botIndex = bots.indexOf(bot) + 1;
-        console.log(`🤖 [JoinAll] Processing bot #${botIndex} (${idx+1}/${total})`);
-        try{
-          // First try Discord API invite
-          let success = false;
-          try{
-            if(bot.client.api){
-              await bot.client.api.invites(inviteCode).post();
-              console.log(`✅ [Bot ${botIndex}] Joined via API`);
-              results.push({botIndex, success:true, method:'api'});
-              success = true;
-            }
-          }catch(apiErr){
-            const apiMsg = (apiErr?.message||String(apiErr)).toLowerCase();
-            console.log(`🔄 [Bot ${botIndex}] API failed (${apiMsg.slice(0,60)}), trying Puppeteer...`);
-          }
-          
-          if(!success){
-            const solverResult = await joinServerWithVerification(bot.token, inviteCode, botIndex);
-            results.push({botIndex, success:solverResult.success, method:solverResult.method, error:solverResult.error});
-            
-            if(solverResult.success){
-              console.log(`✅ [Bot ${botIndex}] Joined via solver (${solverResult.method})`);
-              const qi = verificationQueue.findIndex(v=>v.botIndex===botIndex);
-              if(qi>=0) verificationQueue.splice(qi,1);
-              bot.needsVerification = false;
-            } else {
-              console.log(`❌ [Bot ${botIndex}] Solver failed: ${solverResult.error}`);
-              if(!verificationQueue.some(v=>v.botIndex===botIndex)){
-                verificationQueue.push({botIndex, type:'Captcha Needed', guildName:'discord.gg/'+inviteCode});
-              }
-              bot.needsVerification = true;
-              bot.verificationType = 'Captcha';
-            }
-          }
-        }catch(err){
-          results.push({botIndex:bots.indexOf(bot)+1, success:false, error:err.message});
-        }
-        // Update globalJoinResults after each bot so UI can poll partial progress
-        globalJoinResults = [...results];
-      }
-      
-      console.log(`✅ [JoinAll] Completed ${results.filter(r=>r.success).length}/${total} bots`);
-      globalJoinResults = results;
+      // Respond immediately with total count, process in background
       res.writeHead(200,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({completed:results.length,total,results}));
+      res.end(JSON.stringify({status:'processing',total,completed:0}));
+      
+      // Process each bot sequentially to avoid rate limiting
+      (async ()=>{
+        for(const [idx, bot] of readyBots.entries()){
+          const botIndex = bots.indexOf(bot) + 1;
+          console.log(`🤖 [JoinAll] Processing bot #${botIndex} (${idx+1}/${total})`);
+          try{
+            let success = false;
+            try{
+              if(bot.client.api){
+                await bot.client.api.invites(inviteCode).post();
+                console.log(`✅ [Bot ${botIndex}] Joined via API`);
+                results.push({botIndex, success:true, method:'api'});
+                success = true;
+              }
+            }catch(apiErr){
+              const apiMsg = (apiErr?.message||String(apiErr)).toLowerCase();
+              console.log(`🔄 [Bot ${botIndex}] API failed (${apiMsg.slice(0,60)}), trying Puppeteer...`);
+            }
+            
+            if(!success){
+              const solverResult = await joinServerWithVerification(bot.token, inviteCode, botIndex);
+              results.push({botIndex, success:solverResult.success, method:solverResult.method, error:solverResult.error});
+              
+              if(solverResult.success){
+                console.log(`✅ [Bot ${botIndex}] Joined via solver (${solverResult.method})`);
+                const qi = verificationQueue.findIndex(v=>v.botIndex===botIndex);
+                if(qi>=0) verificationQueue.splice(qi,1);
+                bot.needsVerification = false;
+              } else {
+                console.log(`❌ [Bot ${botIndex}] Solver failed: ${solverResult.error}`);
+                if(!verificationQueue.some(v=>v.botIndex===botIndex)){
+                  verificationQueue.push({botIndex, type:'Captcha Needed', guildName:'discord.gg/'+inviteCode});
+                }
+                bot.needsVerification = true;
+                bot.verificationType = 'Captcha';
+              }
+            }
+          }catch(err){
+            results.push({botIndex:bots.indexOf(bot)+1, success:false, error:err.message});
+          }
+          // Update globalJoinResults after each bot so UI can poll partial progress
+          globalJoinResults = [...results];
+        }
+        console.log(`✅ [JoinAll] Completed ${results.filter(r=>r.success).length}/${total} bots`);
+        globalJoinResults = results;
+      })();
     }catch(e){
       if(!res.headersSent){
         res.writeHead(500,{'Content-Type':'application/json'});
