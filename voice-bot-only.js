@@ -694,10 +694,6 @@ startStatusAutoRefresh();
       const results = [];
       const total = readyBots.length;
       
-      // Respond immediately, process in background
-      res.writeHead(200,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({status:'processing',total,completed:0}));
-      
       // Process each bot sequentially to avoid rate limiting
       for(const [idx, bot] of readyBots.entries()){
         const botIndex = bots.indexOf(bot) + 1;
@@ -714,22 +710,17 @@ startStatusAutoRefresh();
             }
           }catch(apiErr){
             const apiMsg = (apiErr?.message||String(apiErr)).toLowerCase();
-            // If captcha needed, use Puppeteer solver
-            if(apiMsg.includes('captcha') || apiMsg.includes('verify') || apiMsg.includes('cloudflare') || apiMsg.includes('rate limit')){
-              console.log(`🔄 [Bot ${botIndex}] API invite failed (CAPTCHA), using Puppeteer solver...`);
-            } else {
-              console.log(`🔄 [Bot ${botIndex}] API invite failed (${apiMsg.slice(0,60)}), trying Puppeteer...`);
-            }
+            console.log(`🔄 [Bot ${botIndex}] API failed (${apiMsg.slice(0,60)}), trying Puppeteer...`);
           }
           
           if(!success){
-            // Use Puppeteer-based verification solver
             const solverResult = await joinServerWithVerification(bot.token, inviteCode, botIndex);
             results.push({botIndex, success:solverResult.success, method:solverResult.method, error:solverResult.error});
             
             if(solverResult.success){
               console.log(`✅ [Bot ${botIndex}] Joined via solver (${solverResult.method})`);
-              verificationQueue.splice(verificationQueue.findIndex(v=>v.botIndex===botIndex),1);
+              const qi = verificationQueue.findIndex(v=>v.botIndex===botIndex);
+              if(qi>=0) verificationQueue.splice(qi,1);
               bot.needsVerification = false;
             } else {
               console.log(`❌ [Bot ${botIndex}] Solver failed: ${solverResult.error}`);
@@ -743,13 +734,14 @@ startStatusAutoRefresh();
         }catch(err){
           results.push({botIndex:bots.indexOf(bot)+1, success:false, error:err.message});
         }
-        // Small delay between bots
-        await new Promise(r => setTimeout(r, 3000));
+        // Update globalJoinResults after each bot so UI can poll partial progress
+        globalJoinResults = [...results];
       }
       
       console.log(`✅ [JoinAll] Completed ${results.filter(r=>r.success).length}/${total} bots`);
-      // Store results for status check
       globalJoinResults = results;
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({completed:results.length,total,results}));
     }catch(e){
       if(!res.headersSent){
         res.writeHead(500,{'Content-Type':'application/json'});
