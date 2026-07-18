@@ -70,6 +70,75 @@ let micFfmpeg = null;
 let micActive = false;
 let micStreamReq = null; // single long-lived upload request
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function openInviteInBrowser(inviteCode) {
+  if (!inviteCode) return null;
+  const url = `https://discord.com/invite/${inviteCode}`;
+  openChromePage(url);
+  return url;
+}
+
+async function joinInviteForBot(bot, inviteCode, options = {}) {
+  if (!bot || bot.status !== 'ready' || !inviteCode) {
+    return { success: false, error: !inviteCode ? 'No invite code' : 'Bot offline' };
+  }
+
+  const maxRetries = Number(options.maxRetries || 3);
+  const retryDelayMs = Number(options.retryDelayMs || 4000);
+  const channelId = options.channelId || null;
+  const guildId = options.guildId || null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    try {
+      const invite = await bot.client.fetchInvite(inviteCode);
+      await invite.accept();
+      bot.needsVerification = false;
+      bot.verificationType = null;
+      bot.lastError = null;
+
+      if (channelId && guildId) {
+        await bot.joinChannel(channelId, guildId);
+      }
+
+      return { success: true, attempt, method: 'fetchInvite' };
+    } catch (err1) {
+      const message = (err1?.message || String(err1 || 'Unknown error')).slice(0, 180);
+      bot.lastError = message;
+
+      if (attempt < maxRetries) {
+        await sleep(retryDelayMs + (attempt * 1000));
+        continue;
+      }
+
+      try {
+        if (bot.client.api && typeof bot.client.api.invites === 'function') {
+          await bot.client.api.invites(inviteCode).post();
+          bot.needsVerification = false;
+          bot.verificationType = null;
+          bot.lastError = null;
+          if (channelId && guildId) {
+            await bot.joinChannel(channelId, guildId);
+          }
+          return { success: true, attempt, method: 'apiInvites' };
+        }
+      } catch (err2) {
+        const fallbackMessage = (err2?.message || String(err2 || 'Unknown error')).slice(0, 180);
+        bot.lastError = fallbackMessage;
+      }
+
+      bot.needsVerification = true;
+      bot.verificationType = 'Invite';
+      const verificationUrl = options.openBrowser !== false ? openInviteInBrowser(inviteCode) : null;
+      return { success: false, attempt, error: message, verificationRequired: true, verificationUrl };
+    }
+  }
+
+  return { success: false, error: 'Join attempt failed' };
+}
+
 // ============================================================
 // AUDIO
 // ============================================================
@@ -269,7 +338,12 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <div class="card"><h2>📡 Voice Channel</h2>
 <input id="guildInput" type="text" placeholder="Guild ID"/><input id="channelInput" type="text" placeholder="Voice Channel ID"/>
 <div class="row"><button class="btn-green" id="joinBtn">Join</button><button class="btn-blue" id="stayBtn">Rejoin</button><button class="btn-red" id="leaveBtn">Leave All</button><button class="btn-gray" id="refreshBtn">Refresh</button></div>
-<div class="msg" id="vcMsg"></div></div>
+<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+  <input id="inviteInput" type="text" placeholder="Discord invite link (discord.gg/xxxx or discord.com/invite/xxxx)" style="flex:1;min-width:260px;max-width:520px;margin-top:0"/>
+  <button class="btn-blue" id="pasteInviteBtn" style="margin-top:0">Paste</button>
+</div>
+<div class="row"><button class="btn-purple" id="joinInviteBtn">Join Server</button></div>
+<div class="msg" id="vcMsg"></div><div class="msg" id="inviteMsg"></div></div>
 <div class="card"><h2>🎵 Audio <span class="badge" id="playState">Silence</span></h2>
 <input type="file" id="audioFile" accept="audio/*" style="background:#1e293b;border:1px solid #475569;border-radius:10px;padding:10px;width:100%;color:#e2e8f0;"/>
 <div class="slider-row"><span>Volume</span><input type="range" id="volSlider" min="0" max="200" step="1" value="100"/><span class="vol-label" id="volDisplay">1.0x</span></div>
@@ -309,7 +383,8 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 </div>
 <script>
 const vcMsg=document.getElementById('vcMsg'),audioMsg=document.getElementById('audioMsg'),botGrid=document.getElementById('botGrid'),botCount=document.getElementById('botCount'),playState=document.getElementById('playState');
-const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput');
+const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput'),inviteInput=document.getElementById('inviteInput');
+const inviteMsg=document.getElementById('inviteMsg');
 const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
@@ -319,6 +394,9 @@ return '<div class="bot-card"><div><strong>#'+b.index+'</strong> <span class="'+
 async function fetchStatus(){try{const r=await fetch('/status');const d=await r.json();render(d)}catch(e){vcMsg.textContent='Fetch failed'}}
 document.getElementById('joinBtn').onclick=async()=>{const ch=channelInput.value.trim();if(!ch){vcMsg.textContent='Enter channel ID';return}
 vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,guildId:guildInput.value.trim()})});const d=await r.json();vcMsg.textContent=d.status||'Done';fetchStatus()}
+document.getElementById('pasteInviteBtn').onclick=async()=>{try{const text=await navigator.clipboard.readText();if(text&&text.trim()){inviteInput.value=text.trim();inviteMsg.textContent='Invite pasted';}else{inviteMsg.textContent='Clipboard is empty';}}catch(e){inviteMsg.textContent='Could not read clipboard';}}
+inviteInput.addEventListener('keydown',(e)=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('joinInviteBtn').click();}});
+document.getElementById('joinInviteBtn').onclick=async()=>{const invite=inviteInput.value.trim();if(!invite){inviteMsg.textContent='Enter an invite link';return}inviteMsg.textContent='Joining server...';const r=await fetch('/join-invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite,channelId:channelInput.value.trim(),guildId:guildInput.value.trim(),maxRetries:3,retryDelayMs:4000})});const d=await r.json();inviteMsg.textContent=d.status||d.error||'Done';fetchStatus()}
 document.getElementById('stayBtn').onclick=async()=>{vcMsg.textContent='Rejoining...';const r=await fetch('/stay',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
 document.getElementById('leaveBtn').onclick=async()=>{vcMsg.textContent='Leaving...';const r=await fetch('/leave',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
 document.getElementById('refreshBtn').onclick=fetchStatus;
@@ -657,6 +735,41 @@ startStatusAutoRefresh();
     try{const b=await parseJSONBody(req);const ch=b.channelId||b.channel||null;const gu=b.guildId||b.guild||null;if(!ch){res.writeHead(400);res.end(JSON.stringify({error:'channelId required'}));return;}
     bots.forEach((bot)=>{if(bot.status==='ready'){bot.joinChannel(ch,gu).catch(()=>{});}});
     res.writeHead(200);res.end(JSON.stringify({status:'started'}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
+  }
+
+  if(req.url==='/join-invite'&&req.method==='POST'){
+    try{
+      const b = await parseJSONBody(req);
+      const invite = (b.invite || '').trim();
+      const inviteCode = extractInviteCode(invite);
+      if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
+      const readyBots = bots.filter((bot)=>bot.status==='ready');
+      if(!readyBots.length){res.writeHead(400);res.end(JSON.stringify({error:'No ready bots'}));return;}
+
+      const results = [];
+      for (const bot of readyBots) {
+        try {
+          const inviteData = await bot.client.fetchInvite(inviteCode);
+          await inviteData.accept();
+          bot.needsVerification = false;
+          bot.verificationType = null;
+          bot.lastError = null;
+          if (b.channelId && b.guildId) {
+            await bot.joinChannel(b.channelId, b.guildId);
+          }
+          results.push({ botIndex: bots.indexOf(bot) + 1, success: true, method: 'fetchInvite' });
+        } catch (e) {
+          bot.needsVerification = true;
+          bot.verificationType = 'Invite';
+          bot.lastError = e?.message || String(e);
+          results.push({ botIndex: bots.indexOf(bot) + 1, success: false, error: e?.message || String(e) });
+        }
+      }
+
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:`Joined ${results.filter(r=>r.success).length}/${results.length} bots`, inviteCode, results}));
+    }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
+    return;
   }
   const sessionMatch = req.url.match(/^\/session\/(\d+)(?:\/(invite|solve|skip))?$/);
   if(sessionMatch){

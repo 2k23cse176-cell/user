@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Discord Auto Continue + Joiner
+// @name         Discord Auto Joiner
 // @namespace    https://github.com/2k23cse176-cell/user
 // @version      1.3
-// @description  Handles Discord web prompts such as "Continue in Browser", invite joins, common consent prompts, and visible verification widgets automatically.
+// @description  Opens Discord invite links and clicks common join/consent prompts, plus visible verification widgets automatically.
 // @match        https://discord.com/*
 // @match        https://discord.gg/*
 // @run-at       document-idle
@@ -94,7 +94,6 @@
     for (const el of elements) {
       if (!isVisible(el)) continue;
 
-      if (clickMatch(el, [/continue in browser/i, /open in browser/i])) return true;
       if (clickMatch(el, [/join server/i, /accept invite/i, /join/i])) return true;
       if (clickMatch(el, [/i agree/i, /agree/i, /accept terms/i, /continue/i, /next/i])) return true;
       if (clickMatch(el, [/i am at least 13/i, /i am over 13/i, /i am 13/i, /yes/i])) return true;
@@ -111,8 +110,10 @@
 
   function shouldRun() {
     const url = window.location.href;
-    return invitePattern.test(url) || /continue in browser/i.test(document.body?.textContent || '') || /captcha|verify|robot|human/i.test(document.body?.textContent || '');
+    return invitePattern.test(url) || /join server|accept invite|captcha|verify|robot|human/i.test(document.body?.textContent || '');
   }
+
+  if (!shouldRun()) return;
 
   let attempts = 0;
   const observer = new MutationObserver(() => {
@@ -121,8 +122,6 @@
       observer.disconnect();
     }
   });
-
-  if (!shouldRun()) return;
 
   if (clickBestAction()) return;
 
