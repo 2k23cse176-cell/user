@@ -6,6 +6,7 @@ const ffmpeg = require('ffmpeg-static');
 const puppeteer = require('puppeteer');
 const http = require('http');
 const fs = require('fs');
+const { joinServerWithVerification, solveServerVerification } = require('./verification-solver.js');
 try { require('dotenv').config(); console.log('📦 dotenv loaded'); } catch(e) { console.log('📦 dotenv not installed or failed to load'); }
 
 function parseList(v) { return (v||'').split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean); }
@@ -264,6 +265,7 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
   .verify-card button{margin-top:8px;width:100%}
 .btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}
 .btn-purple{background:#8b5cf6;color:#fff}.btn-gray{background:#475569;color:#fff}.btn-teal{background:#14b8a6;color:#0f172a}
+.btn-yellow{background:#eab308;color:#0f172a}
 </style></head><body>
 <h1>🎧 Multi-Bot Controller</h1><p>${bots.length} bots</p>
 <div class="card"><h2>📡 Voice Channel</h2>
@@ -285,6 +287,16 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 <button class="btn-blue" id="undeafBtn">🙊 Undeafen</button>
 </div>
 <div class="msg" id="audioMsg"></div></div>
+<div class="card"><h2>🚀 Join Server (All Bots)</h2>
+<p>Paste a Discord invite link below to make all ready bots join that server with automatic CAPTCHA solving.</p>
+<input id="batchInviteInput" type="text" placeholder="discord.gg/xxxxxxxxx or full invite URL"/>
+<div class="row">
+<button class="btn-yellow" id="batchInviteBtn">🤖 Join All Bots (Auto-Solve)</button>
+<button class="btn-gray" id="batchInviteStatusBtn">Check Status</button>
+</div>
+<div class="msg" id="batchInviteMsg"></div>
+<div class="msg" id="batchInviteResults" style="white-space:pre-wrap;font-size:.85rem;margin-top:8px;"></div>
+</div>
 <div class="card"><h2>🤖 Bots <span class="badge" id="botCount">0/0</span></h2>
 <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">
   <a href="/login" target="_blank" class="btn-gray" style="text-decoration:none;padding:10px 14px;border-radius:10px;display:inline-block">Open Server Login</a>
@@ -311,6 +323,7 @@ button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weig
 const vcMsg=document.getElementById('vcMsg'),audioMsg=document.getElementById('audioMsg'),botGrid=document.getElementById('botGrid'),botCount=document.getElementById('botCount'),playState=document.getElementById('playState');
 const guildInput=document.getElementById('guildInput'),channelInput=document.getElementById('channelInput');
 const micMsg=document.getElementById('micMsg'),micStatusBadge=document.getElementById('micStatusBadge');
+const batchInviteMsg=document.getElementById('batchInviteMsg'),batchInviteResults=document.getElementById('batchInviteResults');
 let mediaRecorder=null;let mediaStream=null;let uploadController=null;
 function render(d){if(!d||!d.bots){vcMsg.textContent='No data';return}
 botCount.textContent=d.bots.filter(b=>b.ready).length+'/'+d.bots.length;playState.textContent=d.isPlaying?'🔊 Playing':'🔇 Silence';micStatusBadge.textContent=d.micActive?'Active':'Stopped';
@@ -322,6 +335,12 @@ vcMsg.textContent='Joining...';const r=await fetch('/join',{method:'POST',header
 document.getElementById('stayBtn').onclick=async()=>{vcMsg.textContent='Rejoining...';const r=await fetch('/stay',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
 document.getElementById('leaveBtn').onclick=async()=>{vcMsg.textContent='Leaving...';const r=await fetch('/leave',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
 document.getElementById('refreshBtn').onclick=fetchStatus;
+document.getElementById('batchInviteBtn').onclick=async()=>{const inv=batchInviteInput.value.trim();if(!inv){batchInviteMsg.textContent='Enter invite link';return}
+batchInviteMsg.textContent='Joining all bots (this may take a while)...';batchInviteResults.textContent='';
+const r=await fetch('/join-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();
+batchInviteMsg.textContent='Done. '+d.completed+'/'+d.total+' bots processed.';
+batchInviteResults.textContent=(d.results||[]).map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined':'❌ '+r.error.slice(0,80))).join('\\n');fetchStatus()}
+document.getElementById('batchInviteStatusBtn').onclick=fetchStatus;
 const vs=document.getElementById('volSlider'),vd=document.getElementById('volDisplay')
 vs.oninput=()=>{vd.textContent=(vs.value/100).toFixed(2)+'x'}
 vs.onchange=async()=>{const v=vs.value/100;await fetch('/audio/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:v})})}
@@ -626,6 +645,126 @@ startStatusAutoRefresh();
     return;
   }
 
+  // ========== BATCH INVITE ALL BOTS WITH VERIFICATION SOLVING ==========
+  if(req.url==='/join-all'&&req.method==='POST'){
+    try{
+      const b = await parseJSONBody(req);
+      const inviteCode = extractInviteCode(b.invite);
+      if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite code'}));return;}
+      
+      const readyBots = bots.filter(bot => bot.status === 'ready' && bot.token);
+      if(!readyBots.length){res.writeHead(400);res.end(JSON.stringify({error:'No ready bots'}));return;}
+      
+      const results = [];
+      const total = readyBots.length;
+      
+      // Respond immediately, process in background
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'processing',total,completed:0}));
+      
+      // Process each bot sequentially to avoid rate limiting
+      for(const [idx, bot] of readyBots.entries()){
+        const botIndex = bots.indexOf(bot) + 1;
+        console.log(`🤖 [JoinAll] Processing bot #${botIndex} (${idx+1}/${total})`);
+        try{
+          // First try Discord API invite
+          let success = false;
+          try{
+            if(bot.client.api){
+              await bot.client.api.invites(inviteCode).post();
+              console.log(`✅ [Bot ${botIndex}] Joined via API`);
+              results.push({botIndex, success:true, method:'api'});
+              success = true;
+            }
+          }catch(apiErr){
+            const apiMsg = (apiErr?.message||String(apiErr)).toLowerCase();
+            // If captcha needed, use Puppeteer solver
+            if(apiMsg.includes('captcha') || apiMsg.includes('verify') || apiMsg.includes('cloudflare') || apiMsg.includes('rate limit')){
+              console.log(`🔄 [Bot ${botIndex}] API invite failed (CAPTCHA), using Puppeteer solver...`);
+            } else {
+              console.log(`🔄 [Bot ${botIndex}] API invite failed (${apiMsg.slice(0,60)}), trying Puppeteer...`);
+            }
+          }
+          
+          if(!success){
+            // Use Puppeteer-based verification solver
+            const solverResult = await joinServerWithVerification(bot.token, inviteCode, botIndex);
+            results.push({botIndex, success:solverResult.success, method:solverResult.method, error:solverResult.error});
+            
+            if(solverResult.success){
+              console.log(`✅ [Bot ${botIndex}] Joined via solver (${solverResult.method})`);
+              verificationQueue.splice(verificationQueue.findIndex(v=>v.botIndex===botIndex),1);
+              bot.needsVerification = false;
+            } else {
+              console.log(`❌ [Bot ${botIndex}] Solver failed: ${solverResult.error}`);
+              if(!verificationQueue.some(v=>v.botIndex===botIndex)){
+                verificationQueue.push({botIndex, type:'Captcha Needed', guildName:'discord.gg/'+inviteCode});
+              }
+              bot.needsVerification = true;
+              bot.verificationType = 'Captcha';
+            }
+          }
+        }catch(err){
+          results.push({botIndex:bots.indexOf(bot)+1, success:false, error:err.message});
+        }
+        // Small delay between bots
+        await new Promise(r => setTimeout(r, 3000));
+      }
+      
+      console.log(`✅ [JoinAll] Completed ${results.filter(r=>r.success).length}/${total} bots`);
+      // Store results for status check
+      globalJoinResults = results;
+    }catch(e){
+      if(!res.headersSent){
+        res.writeHead(500,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({error:e.message}));
+      }
+    }
+    return;
+  }
+
+  // ========== GET JOIN-ALL RESULTS ==========
+  let globalJoinResults = null;
+  if(req.url==='/join-all/status'&&req.method==='GET'){
+    res.writeHead(200,{'Content-Type':'application/json'});
+    if(globalJoinResults){
+      res.end(JSON.stringify({completed:globalJoinResults.length,total:bots.filter(b=>b.status==='ready').length,results:globalJoinResults}));
+    } else {
+      res.end(JSON.stringify({status:'no-recent-join'}));
+    }
+    return;
+  }
+
+  // ========== VERIFICATION SOLVER ENDPOINT ==========
+  if(req.url==='/verify/solve'&&req.method==='POST'){
+    try{
+      const b = await parseJSONBody(req);
+      const botIndex = Number(b.botIndex) || 0;
+      const inviteCode = extractInviteCode(b.invite) || '';
+      if(botIndex < 1 || botIndex > bots.length){res.writeHead(400);res.end(JSON.stringify({error:'Invalid bot index'}));return;}
+      const bot = bots[botIndex - 1];
+      if(!bot.token){res.writeHead(400);res.end(JSON.stringify({error:'Bot token missing'}));return;}
+      
+      // Run solver in background
+      res.writeHead(202,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({status:'solving',botIndex}));
+      
+      const result = await joinServerWithVerification(bot.token, inviteCode || (verificationQueue.find(v=>v.botIndex===botIndex)?.guildName || ''), botIndex);
+      if(result.success){
+        const qi = verificationQueue.findIndex(v=>v.botIndex===botIndex);
+        if(qi>=0) verificationQueue.splice(qi,1);
+        bot.needsVerification = false;
+        bot.verificationType = null;
+      }
+    }catch(e){
+      if(!res.headersSent){
+        res.writeHead(500,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({error:e.message}));
+      }
+    }
+    return;
+  }
+
   // Serve session screenshots saved by Puppeteer
   const ssMatch = req.url.match(/^\/session-screenshot\/(\d+)$/);
   if(ssMatch && req.method==='GET'){
@@ -658,7 +797,7 @@ startStatusAutoRefresh();
     bots.forEach((bot)=>{if(bot.status==='ready'){bot.joinChannel(ch,gu).catch(()=>{});}});
     res.writeHead(200);res.end(JSON.stringify({status:'started'}));}catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
-  const sessionMatch = req.url.match(/^\/session\/(\d+)(?:\/(invite|solve|skip))?$/);
+  const sessionMatch = req.url.match(/^\/session\/(\d+)(?:\/(invite|solve|skip|auto-solve))?$/);
   if(sessionMatch){
     const idx = Number(sessionMatch[1]) - 1;
     if(idx < 0 || idx >= bots.length){res.writeHead(404);res.end(JSON.stringify({error:'Invalid session'}));return;}
@@ -670,7 +809,7 @@ startStatusAutoRefresh();
       res.writeHead(200,{'Content-Type':'text/html'});
       res.end(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Bot Session ${idx+1}</title>
-<style>*{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}h1{margin:0 0 12px}p{margin:6px 0 12px;color:#cbd5e1}input,button,textarea{font:inherit}input[type="text"],textarea{width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px}button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700;margin-top:10px} .card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}.btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}</style></head><body>
+<style>*{box-sizing:border-box}body{background:#0b1220;color:#e5e7eb;font-family:system-ui,sans-serif;margin:0;padding:24px}h1{margin:0 0 12px}p{margin:6px 0 12px;color:#cbd5e1}input,button,textarea{font:inherit}input[type="text"],textarea{width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px}button{cursor:pointer;border:none;padding:12px 16px;border-radius:12px;font-weight:700;margin-top:10px} .card{background:rgba(15,23,42,.95);border:1px solid rgba(148,163,184,.15);border-radius:18px;padding:20px;max-width:960px;margin-bottom:20px}.btn-green{background:#22c55e;color:#0f172a}.btn-blue{background:#0ea5e9;color:#fff}.btn-red{background:#ef4444;color:#fff}.btn-yellow{background:#eab308;color:#0f172a}.msg{margin:12px 0 0;color:#cbd5e1;font-size:.9rem}</style></head><body>
 <h1>Bot Session ${idx+1}</h1>
 <div class="card"><p>Bot: ${bot.client.user?.tag || 'Unknown'}</p><p>Token: ${bot.token?bot.token.slice(0,6)+'...'+bot.token.slice(-6):'N/A'}</p><p>Status: ${bot.status}</p><p>Voice state: ${bot.voiceState}</p><p>Channel: ${bot.channelId || 'N/A'}</p><p>Guild: ${bot.guildId || 'N/A'}</p><p>Verification: ${queued ? 'Needed' : (bot.needsVerification ? 'Needed' : 'OK')}</p><p>Queue target: ${queued ? queued.guildName : 'N/A'}</p></div>
 <div class="card"><h2>Invite / Captcha</h2>
@@ -679,7 +818,7 @@ startStatusAutoRefresh();
   <input id="tokenInput" type="text" placeholder="Paste token here (kept private)" style="width:100%;max-width:420px;border:1px solid #334155;border-radius:12px;padding:12px 14px;background:#0f172a;color:#e2e8f0;margin-top:10px" />
   <div style="margin-top:8px"><button class="btn-green" id="loginTokenBtn">Login With Token (Private)</button></div>
 </div>
-<div class="row"><button class="btn-green" id="joinInviteBtn">Invite Bot</button></div>
+<div class="row"><button class="btn-green" id="joinInviteBtn">Invite Bot</button><button class="btn-yellow" id="autoSolveBtn">🤖 Auto-Join (Solve)</button></div>
 <div class="row"><textarea id="captchaSolution" placeholder="Paste captcha solution"></textarea></div>
 <div class="row"><button class="btn-blue" id="solveBtn">Solve Captcha</button><button class="btn-red" id="skipBtn">Skip</button></div>
 <div class="msg" id="sessionMsg"></div>
@@ -693,6 +832,7 @@ document.getElementById('loginTokenBtn').onclick=async()=>{
   try{const r=await fetch('/session/${idx+1}/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});const d=await r.json();sessionMsg.textContent=d.status||d.error;}catch(e){sessionMsg.textContent='Error: '+e.message}
 };
 document.getElementById('joinInviteBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){sessionMsg.textContent='Enter invite';return}sessionMsg.textContent='Inviting...';const r=await fetch('/session/${idx+1}/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
+document.getElementById('autoSolveBtn').onclick=async()=>{const inv=document.getElementById('inviteInput').value.trim();if(!inv){sessionMsg.textContent='Enter invite';return}sessionMsg.textContent='Auto-joining with verification solver...';const r=await fetch('/session/${idx+1}/auto-solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
 document.getElementById('solveBtn').onclick=async()=>{const txt=document.getElementById('captchaSolution').value.trim();if(!txt){sessionMsg.textContent='Enter solution';return}sessionMsg.textContent='Solving...';const r=await fetch('/session/${idx+1}/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({solution:txt})});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
 document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Skipping...';const r=await fetch('/session/${idx+1}/skip',{method:'POST'});const d=await r.json();sessionMsg.textContent=d.status||d.error;};
 </script>
@@ -719,6 +859,41 @@ document.getElementById('skipBtn').onclick=async()=>{sessionMsg.textContent='Ski
           res.writeHead(200);res.end(JSON.stringify({status:'Captcha needed',error:message}));
         }
       }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
+      return;
+    }
+
+    // ========== AUTO-SOLVE: Use Puppeteer + OCR to join a server ==========
+    if(method==='auto-solve'&&req.method==='POST'){
+      try{
+        const b=await parseJSONBody(req);
+        const inviteCode=extractInviteCode(b.invite);
+        if(!inviteCode){res.writeHead(400);res.end(JSON.stringify({error:'Invalid invite'}));return;}
+        if(!bot.token){res.writeHead(400);res.end(JSON.stringify({error:'Bot token missing'}));return;}
+        
+        // Respond immediately
+        res.writeHead(202,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'solving',botIndex:idx+1}));
+        
+        const result = await joinServerWithVerification(bot.token, inviteCode, idx+1);
+        if(result.success){
+          const qi=verificationQueue.findIndex(v=>v.botIndex===idx+1);
+          if(qi>=0)verificationQueue.splice(qi,1);
+          bot.needsVerification=false;
+          bot.verificationType=null;
+          console.log(`✅ [Bot ${idx+1}] Auto-join success via ${result.method}`);
+        } else {
+          console.log(`❌ [Bot ${idx+1}] Auto-join failed: ${result.error}`);
+          if(!verificationQueue.some(v=>v.botIndex===idx+1)){
+            verificationQueue.push({botIndex:idx+1,type:'Captcha Needed',guildName:'discord.gg/'+inviteCode});
+          }
+          bot.needsVerification=true;
+        }
+      }catch(e){
+        if(!res.headersSent){
+          res.writeHead(500,{'Content-Type':'application/json'});
+          res.end(JSON.stringify({error:e.message}));
+        }
+      }
       return;
     }
 
