@@ -415,7 +415,9 @@ async function pasteTokenLoginAll(){
   }catch(e){ vcMsg.textContent='Paste login all failed: '+e.message; }
 }
 
-document.getElementById('pasteAllBtn').onclick = pasteTokenLoginAll;
+// pasteAllBtn is optional - only set onclick if the element exists
+const pasteAllBtnEl = document.getElementById('pasteAllBtn');
+if(pasteAllBtnEl) pasteAllBtnEl.onclick = pasteTokenLoginAll;
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
