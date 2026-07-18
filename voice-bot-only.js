@@ -425,6 +425,13 @@ async function pasteTokenLoginAll(){
 // pasteAllBtn is optional - only set onclick if the element exists
 const pasteAllBtnEl = document.getElementById('pasteAllBtn');
 if(pasteAllBtnEl) pasteAllBtnEl.onclick = pasteTokenLoginAll;
+// Version: 6 - Server-side buttons fix deployed
+window.onerror = function(msg, url, line) {
+  const errDiv = document.createElement('div');
+  errDiv.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#ef4444;color:#fff;padding:12px;z-index:9999;font-size:14px';
+  errDiv.textContent = 'JS Error: ' + msg + ' (line ' + line + ')';
+  document.body.appendChild(errDiv);
+};
 fetchStatus();setInterval(fetchStatus,10000)
 </script></body></html>`);
     return;
