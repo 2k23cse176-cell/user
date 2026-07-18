@@ -74,6 +74,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function safeDestroyVoiceConnection(connection) {
+  if (!connection) return;
+  try {
+    const status = connection.state?.status;
+    if (status === VoiceConnectionStatus.Destroyed || status === VoiceConnectionStatus.Disconnected) return;
+    connection.destroy();
+  } catch (err) {
+    if (err?.code === 'ERR_SOCKET_DGRAM_NOT_RUNNING') {
+      console.warn('⚠️ Ignored stale voice socket shutdown race');
+      return;
+    }
+    console.error('⚠️ Voice destroy failed:', err?.message || err);
+  }
+}
+
 function openInviteInBrowser(inviteCode) {
   if (!inviteCode) return null;
   const url = `https://discord.com/invite/${inviteCode}`;
@@ -241,7 +256,7 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
       if(!tch)return false;
       if(rt){clearTimeout(rt);rt=null;}
       if(vc&&bot.channelId===tch&&vc.state?.status===VoiceConnectionStatus.Ready){bot.voiceState='connected';return true;}
-      if(vc){try{vc.destroy()}catch(e){}vc=null;}
+      if(vc){safeDestroyVoiceConnection(vc);vc=null;}
       bot.voiceState='connecting';bot.lastError=null;bot.channelId=null;bot.guildId=null;bot.needsVerification=false;bot.verificationType=null;
       try{
         await wfr();
@@ -262,7 +277,7 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
           if(n.status===VoiceConnectionStatus.Disconnected||n.status===VoiceConnectionStatus.Destroyed){
             bot.voiceState='disconnected';
             if(kt){clearInterval(kt);kt=null;}
-            if(vc){try{vc.destroy();}catch(e){}} 
+            safeDestroyVoiceConnection(vc);
             vc=null;
             bot.voiceConnection=null;
             const j=Math.floor(Math.random()*5000)+3000;
@@ -274,8 +289,8 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
         return true;
       }catch(e){bot.lastError=e?.message||String(e);bot.voiceState='failed';return false;}
     },
-    leaveChannel(){if(rt){clearTimeout(rt);rt=null;}if(kt){clearInterval(kt);kt=null;}if(vc){vc.destroy();vc=null;}bot.channelId=null;bot.guildId=null;bot.voiceState='disconnected';},
-    shutdown(){if(rt){clearTimeout(rt);rt=null;}if(kt){clearInterval(kt);kt=null;}try{if(vc)vc.destroy();client.destroy();}catch(e){}}
+    leaveChannel(){if(rt){clearTimeout(rt);rt=null;}if(kt){clearInterval(kt);kt=null;}if(vc){safeDestroyVoiceConnection(vc);vc=null;}bot.channelId=null;bot.guildId=null;bot.voiceState='disconnected';},
+    shutdown(){if(rt){clearTimeout(rt);rt=null;}if(kt){clearInterval(kt);kt=null;}try{if(vc)safeDestroyVoiceConnection(vc);client.destroy();}catch(e){}}
   };
   client.on('ready',async()=>{
     bot.status='ready';
@@ -291,6 +306,13 @@ const botsArray = tokens.slice(0,20).map((token,index)=>{
 });
 
 process.on('unhandledRejection',e=>console.error('❌ Unhandled:',e));
+process.on('uncaughtException', err => {
+  if (err?.code === 'ERR_SOCKET_DGRAM_NOT_RUNNING') {
+    console.warn('⚠️ Ignored stale UDP voice socket shutdown race');
+    return;
+  }
+  console.error('❌ Uncaught exception:', err);
+});
 process.on('SIGTERM',()=>{if(globalAudioProcess){globalAudioProcessKilled=true;try{globalAudioProcess.kill()}catch(e){}}stopMicRouting();bots.forEach(b=>b.shutdown());process.exit(0);});
 process.on('SIGINT',()=>{if(globalAudioProcess){globalAudioProcessKilled=true;try{globalAudioProcess.kill()}catch(e){}}stopMicRouting();bots.forEach(b=>b.shutdown());process.exit(0);});
 
@@ -692,7 +714,7 @@ startStatusAutoRefresh();
     catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}return;
   }
 
-  const updateVS=(mute,deaf)=>{globalMute=mute;globalDeaf=deaf;for(const b of bots){if(b.channelId&&b.guildId&&b.voiceState==='connected'&&b.voiceConnection){try{const g=b.client.guilds.cache.get(b.guildId);if(g){const currentVc=b.voiceConnection; if(currentVc){try{currentVc.destroy();}catch(e){}} const vc=joinVoiceChannel({channelId:b.channelId,guildId:b.guildId,adapterCreator:g.voiceAdapterCreator,group:b.client.user.id,selfDeaf:globalDeaf,selfMute:globalMute});b.voiceConnection=vc;vc.subscribe(globalPlayer);}}catch(e){console.error('UpdateVS failed',e.message);}}}};
+  const updateVS=(mute,deaf)=>{globalMute=mute;globalDeaf=deaf;for(const b of bots){if(b.channelId&&b.guildId&&b.voiceState==='connected'&&b.voiceConnection){try{const g=b.client.guilds.cache.get(b.guildId);if(g){const currentVc=b.voiceConnection; if(currentVc){safeDestroyVoiceConnection(currentVc);} const vc=joinVoiceChannel({channelId:b.channelId,guildId:b.guildId,adapterCreator:g.voiceAdapterCreator,group:b.client.user.id,selfDeaf:globalDeaf,selfMute:globalMute});b.voiceConnection=vc;vc.subscribe(globalPlayer);}}catch(e){console.error('UpdateVS failed',e.message);}}}};
   if(req.url==='/audio/mute'&&req.method==='POST'){updateVS(true,globalDeaf);res.writeHead(200);res.end(JSON.stringify({status:'muted'}));return;}
   if(req.url==='/audio/unmute'&&req.method==='POST'){updateVS(false,globalDeaf);res.writeHead(200);res.end(JSON.stringify({status:'unmuted'}));return;}
   if(req.url==='/audio/deafen'&&req.method==='POST'){updateVS(globalMute,true);res.writeHead(200);res.end(JSON.stringify({status:'deafened'}));return;}
