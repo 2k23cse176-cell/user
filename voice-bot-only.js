@@ -336,10 +336,12 @@ document.getElementById('stayBtn').onclick=async()=>{vcMsg.textContent='Rejoinin
 document.getElementById('leaveBtn').onclick=async()=>{vcMsg.textContent='Leaving...';const r=await fetch('/leave',{method:'POST'});const d=await r.json();vcMsg.textContent=d.status;fetchStatus()}
 document.getElementById('refreshBtn').onclick=fetchStatus;
 document.getElementById('batchInviteBtn').onclick=async()=>{const inv=batchInviteInput.value.trim();if(!inv){batchInviteMsg.textContent='Enter invite link';return}
-batchInviteMsg.textContent='Joining all bots (this may take a while)...';batchInviteResults.textContent='';
+batchInviteMsg.textContent='Joining all bots in progress (this may take a while)...';batchInviteResults.textContent='';
 const r=await fetch('/join-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite:inv})});const d=await r.json();
-batchInviteMsg.textContent='Done. '+d.completed+'/'+d.total+' bots processed.';
-batchInviteResults.textContent=(d.results||[]).map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined':'❌ '+r.error.slice(0,80))).join('\\n');fetchStatus()}
+batchInviteMsg.textContent='Join process started for '+d.total+' bot(s). Polling for results...';
+// Poll for results
+const pollInterval = setInterval(async()=>{try{const pr=await fetch('/join-all/status');const pd=await pr.json();if(pd.completed){batchInviteResults.textContent=pd.completed+'/'+pd.total+' done:\\n'+(pd.results||[]).map(r=>'Bot #'+r.botIndex+': '+(r.success?'✅ Joined ('+r.method+')':'❌ '+(r.error||'failed').slice(0,80))).join('\\n');if(pd.completed>=pd.total)clearInterval(pollInterval);batchInviteMsg.textContent='Completed: '+pd.completed+'/'+pd.total;fetchStatus()}}catch(e){clearInterval(pollInterval);batchInviteMsg.textContent='Poll error: '+e.message},3000)}
+fetchStatus()}
 document.getElementById('batchInviteStatusBtn').onclick=fetchStatus;
 const vs=document.getElementById('volSlider'),vd=document.getElementById('volDisplay')
 vs.oninput=()=>{vd.textContent=(vs.value/100).toFixed(2)+'x'}
