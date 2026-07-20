@@ -557,7 +557,7 @@ async function loadBotStatus(){
   try{
     setStatus('Loading bot status...', 'info');
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Status fetch timeout')), 10000));
-    const r = await Promise.race([fetch(statusUrl), timeoutPromise]);
+    const r = await Promise.race([fetch(statusUrl + '?t=' + Date.now()), timeoutPromise]);
     if(!r.ok) throw new Error('Status fetch failed: '+r.status);
     const d = await r.json();
     const ready = d.bots.filter(b=>b.ready).length;
@@ -634,37 +634,32 @@ startStatusAutoRefresh();
       
       for (const uid of userIds) {
         for (let i = 0; i < count; i++) {
-          const botIndex = i % activeBots.length;
-          const bot = activeBots[botIndex];
-          
-          tasks.push((async () => {
-            try {
-              const user = await Promise.race([
-                bot.client.users.fetch(uid, {force:true}),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Fetch timeout')), 10000))
-              ]);
-              if (!user) return { success: false, botTag: bot.client.user?.tag, error: 'User not found' };
-              
-              await Promise.race([
-                user.send(message),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 10000))
-              ]);
-              return { success: true, botTag: bot.client.user?.tag };
-            } catch (err) {
-              return { success: false, botTag: bot.client.user?.tag, error: err?.message };
-            }
-          })());
+          const bot = activeBots[i % activeBots.length];
+          tasks.push(async () => {
+             try {
+                let u = bot.client.users.cache.get(uid);
+                if (!u) {
+                   u = await bot.client.users.fetch(uid).catch(() => null);
+                }
+                if (!u) return { success: false, tag: bot.client.user?.tag, error: 'User not found or fetch failed' };
+                
+                await u.send(message);
+                return { success: true, tag: bot.client.user?.tag };
+             } catch (err) {
+                return { success: false, tag: bot.client.user?.tag, error: err.message };
+             }
+          });
         }
       }
 
-      // Execute all blasts simultaneously with no delay
-      const settled = await Promise.allSettled(tasks);
-      const successCount = settled.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      // Execute all blasts concurrently
+      const settled = await Promise.all(tasks.map(t => t()));
+      const successCount = settled.filter(r => r.success).length;
       const failedCount = settled.length - successCount;
-      const errors = settled.filter(r => r.status === 'fulfilled' && !r.value.success).map(r => r.value.botTag + ': ' + r.value.error);
+      const errors = [...new Set(settled.filter(r => !r.success).map(r => r.tag + ': ' + r.error))];
 
       res.writeHead(200,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({status:'completed', users: userIds.length, totalMessages: settled.length, successful: successCount, failed: failedCount, usedBots: activeBots.length, errors: [...new Set(errors)]}));
+      res.end(JSON.stringify({status:'completed', users: userIds.length, totalMessages: settled.length, successful: successCount, failed: failedCount, usedBots: activeBots.length, errors}));
     }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
     return;
   }
