@@ -202,12 +202,16 @@ playSilence();
 // Server pipes the entire request body to a single FFmpeg stdin
 // This ensures FFmpeg gets ONE continuous webm stream, not separate files
 // ============================================================
-function startMicRouting() {
-  if (micActive) return;
-  micActive = true;
-  // Single persistent FFmpeg process — reads webm from stdin, outputs raw PCM
+function spawnMicFfmpeg() {
+  // Kill any existing ffmpeg first
+  if (micFfmpeg) {
+    try { micFfmpeg.stdin.end(); } catch(e) {}
+    try { micFfmpeg.kill('SIGKILL'); } catch(e) {}
+    micFfmpeg = null;
+  }
+  // Spawn FFmpeg — only call this AFTER data is ready to be piped in
   micFfmpeg = spawn(ffmpeg, [
-    '-f', 'webm',   // explicitly tell FFmpeg input is webm
+    '-f', 'webm',
     '-i', 'pipe:0',
     '-af', 'volume=2.0',
     '-f', 's16le',
@@ -218,11 +222,23 @@ function startMicRouting() {
   ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
   micFfmpeg.stderr.on('data', d => { const t=d.toString().trim(); if(t) console.log('Mic FFmpeg:',t); });
-  micFfmpeg.on('error', e => { console.error('❌ Mic FFmpeg:', e.message); });
-  micFfmpeg.on('exit', () => { if (micActive) startMicRouting(); });
-  
+  micFfmpeg.on('error', e => { console.error('❌ Mic FFmpeg:', e.message); micFfmpeg = null; });
+  // Do NOT auto-restart on exit — only spawn when new upload arrives
+  micFfmpeg.on('exit', (code) => {
+    console.log('Mic FFmpeg exited, code:', code);
+    micFfmpeg = null;
+    if (micActive) playSilence(); // fallback to silence if no new upload comes
+  });
+
   const resource = createAudioResource(micFfmpeg.stdout, { inputType: StreamType.Raw, inlineVolume: false });
   globalPlayer.play(resource);
+  return micFfmpeg;
+}
+
+function startMicRouting() {
+  // Just set the flag — FFmpeg spawns lazily when upload POST arrives with data
+  micActive = true;
+  console.log('🎤 Mic routing enabled, waiting for browser upload...');
 }
 
 function stopMicRouting() {
@@ -233,7 +249,7 @@ function stopMicRouting() {
   }
   if (micFfmpeg) {
     try { micFfmpeg.stdin.end(); } catch(e) {}
-    try { micFfmpeg.kill(); } catch(e) {}
+    try { micFfmpeg.kill('SIGKILL'); } catch(e) {}
     micFfmpeg = null;
   }
   playSilence();
@@ -1019,20 +1035,39 @@ fetchStatus();setInterval(fetchStatus,2000)
   // Browser sends continuous webm data through a single long-lived POST
   // ================================================================
   if(req.url==='/mic/upload'&&req.method==='POST'){
-    if(!micActive){startMicRouting();}
-    if(micFfmpeg&&micFfmpeg.stdin&&!micFfmpeg.stdin.destroyed){
-      req.pipe(micFfmpeg.stdin,{ end:false });
+    if(!micActive){
+      res.writeHead(400,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({error:'Mic not started. Click Start Mic first.'}));
+      return;
     }
-    req.on('end',()=>{
-      if(!res.writableEnded){
-        res.writeHead(200,{'Content-Type':'application/json'});
-        res.end(JSON.stringify({status:'streaming'}));
-      }
-    });
-    req.on('error',(err)=>{
+    // Spawn a fresh FFmpeg now that we actually have data incoming
+    const ffmpegProc = spawnMicFfmpeg();
+    micStreamReq = req;
+
+    req.pipe(ffmpegProc.stdin, { end: true });
+
+    req.on('error', (err) => {
+      console.error('Mic upload request error:', err.message);
+      try { ffmpegProc.stdin.end(); } catch(e) {}
       if(!res.writableEnded){
         res.writeHead(500,{'Content-Type':'application/json'});
         res.end(JSON.stringify({error:err.message}));
+      }
+    });
+
+    req.on('close', () => {
+      // Browser disconnected — end FFmpeg stdin so it flushes cleanly
+      try { ffmpegProc.stdin.end(); } catch(e) {}
+      if(!res.writableEnded){
+        res.writeHead(200,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'stream ended'}));
+      }
+    });
+
+    req.on('end', () => {
+      if(!res.writableEnded){
+        res.writeHead(200,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({status:'streaming'}));
       }
     });
     return;
