@@ -598,7 +598,13 @@ sendBtn.addEventListener('click', async()=>{
     const d = await r.json();
     if(r.ok){
       setMsg('Completed', 'success');
-      setResult('Sent successfully to '+d.users+' users using '+d.usedBots+' bot(s) in '+d.totalMessages+' message(s).', 'success');
+      let resultText = 'Sent to '+d.users+' users using '+d.usedBots+' bot(s) in '+d.totalMessages+' total attempt(s).\n';
+      resultText += '✅ Successful: ' + d.successful + '\n';
+      resultText += '❌ Failed: ' + d.failed + '\n';
+      if (d.errors && d.errors.length > 0) {
+        resultText += '\nError Details:\n' + d.errors.join('\n');
+      }
+      setResult(resultText, 'success');
     } else {
       setMsg('Error sending DM', 'error');
       setResult('Error: '+(d.error||r.statusText), 'error');
@@ -642,9 +648,9 @@ startStatusAutoRefresh();
                 user.send(message),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 10000))
               ]);
-              return { success: true };
+              return { success: true, botTag: bot.client.user?.tag };
             } catch (err) {
-              return { success: false, error: err?.message };
+              return { success: false, botTag: bot.client.user?.tag, error: err?.message };
             }
           })());
         }
@@ -653,9 +659,11 @@ startStatusAutoRefresh();
       // Execute all blasts simultaneously with no delay
       const settled = await Promise.allSettled(tasks);
       const successCount = settled.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      const failedCount = settled.length - successCount;
+      const errors = settled.filter(r => r.status === 'fulfilled' && !r.value.success).map(r => r.value.botTag + ': ' + r.value.error);
 
       res.writeHead(200,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({status:'completed', users: userIds.length, totalMessages: settled.length, successful: successCount, usedBots: activeBots.length}));
+      res.end(JSON.stringify({status:'completed', users: userIds.length, totalMessages: settled.length, successful: successCount, failed: failedCount, usedBots: activeBots.length, errors: [...new Set(errors)]}));
     }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
     return;
   }
