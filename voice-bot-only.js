@@ -633,24 +633,18 @@ startStatusAutoRefresh();
       const tasks = [];
       
       for (const uid of userIds) {
-        // Pre-fetch the user for each active bot to avoid redundant API calls that can cause rate limiting
-        const botUsers = {};
-        for (const bot of activeBots) {
-          try {
-             botUsers[bot.client.user.id] = await bot.client.users.fetch(uid);
-          } catch(e) {
-             // Will handle missing user in the send loop
-          }
-        }
-
         for (let i = 0; i < count; i++) {
           const botIndex = i % activeBots.length;
           const bot = activeBots[botIndex];
-          const user = botUsers[bot.client.user.id];
           
           tasks.push((async () => {
-            if (!user) return { success: false, botTag: bot.client.user?.tag, error: 'Could not fetch user (Rate limited or blocked)' };
             try {
+              const user = await Promise.race([
+                bot.client.users.fetch(uid, {force:true}),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Fetch timeout')), 10000))
+              ]);
+              if (!user) return { success: false, botTag: bot.client.user?.tag, error: 'User not found' };
+              
               await Promise.race([
                 user.send(message),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 10000))
