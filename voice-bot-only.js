@@ -532,13 +532,13 @@ textarea.addEventListener('paste', ()=>{ setTimeout(()=>{ const token=textarea.v
 
   if(req.url==='/send-user-message'&&req.method==='GET'){
     res.writeHead(200,{'Content-Type':'text/html'});
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Send User DM</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0} .card{width:min(560px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}input,textarea,button{font:inherit}input,textarea{width:100%;border-radius:12px;padding:14px;margin-top:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}textarea{min-height:140px;resize:vertical}button{margin-top:16px;padding:14px 18px;border-radius:12px;border:none;background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer;width:100%}#msg,#result,#statusPanel{margin-top:18px;white-space:pre-wrap;min-height:68px}#msg.status{color:#cbd5e1}#msg.status.error{color:#fca5a5}#msg.status.success{color:#86efac}#result.status.error{color:#fca5a5}#result.status.success{color:#86efac}#statusPanel.status.error{color:#fda4af}#statusPanel.status.warn{color:#fde68a}#statusPanel.status.success{color:#86efac}#statusPanel.status.info{color:#bfdbfe}</style></head><body><div class="card"><h1>Send User DM</h1><p>Send a direct message to a Discord user ID from up to 10 ready bots. The page will dispatch quickly from the bot pool.</p><input id="userId" placeholder="Discord User ID" />
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Send User DM</title><style>body{font-family:system-ui,Segoe UI,Arial;background:#0b1220;color:#e5e7eb;padding:24px;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0} .card{width:min(560px,100%);background:#071022;border-radius:18px;padding:24px;border:1px solid #152231;box-shadow:0 18px 48px rgba(0,0,0,.35)}input,textarea,button{font:inherit}input,textarea{width:100%;border-radius:12px;padding:14px;margin-top:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155}textarea{min-height:140px;resize:vertical}button{margin-top:16px;padding:14px 18px;border-radius:12px;border:none;background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer;width:100%}#msg,#result,#statusPanel{margin-top:18px;white-space:pre-wrap;min-height:68px}#msg.status{color:#cbd5e1}#msg.status.error{color:#fca5a5}#msg.status.success{color:#86efac}#result.status.error{color:#fca5a5}#result.status.success{color:#86efac}#statusPanel.status.error{color:#fda4af}#statusPanel.status.warn{color:#fde68a}#statusPanel.status.success{color:#86efac}#statusPanel.status.info{color:#bfdbfe}</style></head><body><div class="card"><h1>Send User DM</h1><p>Blast a direct message to Discord user IDs (comma separated) from up to 20 ready bots concurrently.</p><input id="userId" placeholder="Discord User IDs (e.g. 123,456)" />
 <textarea id="message" placeholder="Message to send"></textarea>
-<input id="count" type="number" min="1" max="100" value="1" />
-<button id="sendBtn">Send DM</button>
+<input id="count" type="number" min="1" max="1000" value="20" placeholder="Total Messages to send per user" />
+<button id="sendBtn">Send DM Blast</button>
 <div id="statusPanel" class="status info">Loading bot status...</div>
 <button id="refreshStatus" style="margin-top:8px;width:100%;padding:10px 14px;border-radius:12px;border:none;background:#1d4ed8;color:#fff;cursor:pointer;">Refresh Bot Status</button>
-<div id="msg" class="status">Use up to 10 bots and 100 total messages.</div><div id="result" class="status" style="margin-top:16px;white-space:pre-wrap;"></div></div><script>
+<div id="msg" class="status">Use up to 20 bots concurrently with no delay.</div><div id="result" class="status" style="margin-top:16px;white-space:pre-wrap;"></div></div><script>
 const msg=document.getElementById('msg');
 const result=document.getElementById('result');
 const statusPanel=document.getElementById('statusPanel');
@@ -564,7 +564,7 @@ async function loadBotStatus(){
     latestReadyBots = ready;
     setStatus(ready + ' ready bot(s) / ' + d.bots.length + ' total', ready ? 'success' : 'warn');
     if(!ready) setMsg('No ready bots available. Please wait for bots to come online.', 'warn');
-    else setMsg('Ready to send DMs.', 'success');
+    else setMsg('Ready to blast DMs.', 'success');
   }catch(e){
     latestReadyBots = 0;
     const errText = e.message || 'Unknown error';
@@ -581,31 +581,31 @@ window.addEventListener('load', ()=>{
   loadBotStatus();
   startStatusAutoRefresh();
 });
-document.getElementById('sendBtn').addEventListener('click', async()=>{
+sendBtn.addEventListener('click', async()=>{
   const userId=userIdInput.value.trim();
   const message=messageInput.value.trim();
   let count=Number(countInput.value)||1;
   if(!userId){setMsg('Enter a user ID.', 'error');return;}
   if(!message){setMsg('Enter a message.', 'error');return;}
-  if(count<1)count=1; if(count>100)count=100;
+  if(count<1)count=1;
   if(latestReadyBots === 0){setMsg('No ready bots available yet. Refresh status and try again.', 'error');return;}
   sendBtn.disabled=true;
-  sendBtn.textContent='Sending...';
+  sendBtn.textContent='Blasting...';
   setResult('');
-  setMsg('Sending message...', 'info');
+  setMsg('Blasting messages...', 'info');
   try{
     const r = await fetch('/send-user-message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId,message,count})});
     const d = await r.json();
     if(r.ok){
       setMsg('Completed', 'success');
-      setResult('Sent to '+d.sentTo+' using '+d.usedBots+' bot(s) in '+d.totalMessages+' message(s).\n'+(d.results||[]).map(r=>r.botTag+': '+(r.success?'OK':r.error)).join('\n'), 'success');
+      setResult('Sent successfully to '+d.users+' users using '+d.usedBots+' bot(s) in '+d.totalMessages+' message(s).', 'success');
     } else {
       setMsg('Error sending DM', 'error');
       setResult('Error: '+(d.error||r.statusText), 'error');
     }
   }catch(e){setMsg('Request failed', 'error');setResult('Failed: '+e.message, 'error');}
   sendBtn.disabled=false;
-  sendBtn.textContent='Send DM';
+  sendBtn.textContent='Send DM Blast';
 });
 loadBotStatus();
 startStatusAutoRefresh();
@@ -616,38 +616,46 @@ startStatusAutoRefresh();
   if(req.url==='/send-user-message'&&req.method==='POST'){
     try{
       const b = await parseJSONBody(req);
-      const userId = (b.userId||'').trim();
+      const userIds = (b.userId||'').split(',').map(id=>id.trim()).filter(Boolean);
       const message = (b.message||'').trim();
       let count = Number(b.count) || 1;
-      if(!userId || !message){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'userId and message required'}));return;}
-      if(count < 1) count = 1;
-      if(count > 100) count = 100;
-      const activeBots = bots.filter(bot=>bot.status==='ready').slice(0, 10);
+      if(!userIds.length || !message){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'userIds and message required'}));return;}
+      
+      const activeBots = bots.filter(bot=>bot.status==='ready').slice(0, 20);
       if(!activeBots.length){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'No ready bots available'}));return;}
-      const messagesPerBot = Math.ceil(count / activeBots.length);
+
       const tasks = [];
-      for(const [idx, bot] of activeBots.entries()){
-        const tag = bot.client.user?.tag || `Bot ${idx+1}`;
-        for(let i=0;i<messagesPerBot && tasks.length < count;i++){
-          tasks.push((async()=>{
-            try{
+      const messagesPerBot = Math.ceil(count / activeBots.length);
+      
+      for (const uid of userIds) {
+        for (let i = 0; i < count; i++) {
+          const botIndex = i % activeBots.length;
+          const bot = activeBots[botIndex];
+          
+          tasks.push((async () => {
+            try {
               const user = await Promise.race([
-                bot.client.users.fetch(userId, {force:true}),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('User fetch timeout')), 10000))
+                bot.client.users.fetch(uid, {force:true}),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Fetch timeout')), 10000))
               ]);
               await Promise.race([
                 user.send(message),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Send timeout')), 10000))
               ]);
-              return {botTag: tag, success: true};
-            }catch(err){return {botTag: tag, success: false, error: err?.message || String(err)};}
+              return { success: true };
+            } catch (err) {
+              return { success: false, error: err?.message };
+            }
           })());
         }
       }
+
+      // Execute all blasts simultaneously with no delay
       const settled = await Promise.allSettled(tasks);
-      const results = settled.map(r=> r.status === 'fulfilled' ? r.value : {botTag:'Unknown', success:false, error:r.reason?.message||String(r.reason)});
+      const successCount = settled.filter(r => r.status === 'fulfilled' && r.value.success).length;
+
       res.writeHead(200,{'Content-Type':'application/json'});
-      res.end(JSON.stringify({sentTo:userId, totalMessages: results.length, usedBots: activeBots.length, results}));
+      res.end(JSON.stringify({status:'completed', users: userIds.length, totalMessages: settled.length, successful: successCount, usedBots: activeBots.length}));
     }catch(e){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
     return;
   }
